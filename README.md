@@ -8,9 +8,9 @@ Uma barra lateral de vidro fosco para o Windows. Fica escondida como uma alça f
 - **Apps:** todos os apps do Menu Iniciar, inclusive os da Microsoft Store. Digite e aperte Enter.
 - **WhatsApp:** o WhatsApp Web dentro da barra. As mensagens novas aparecem no Início e a alça fica âmbar quando há não lidas.
 - **Música:** YouTube Music. Digite o nome e Enter já toca o primeiro resultado. O Início ganha controles de tocar, pausar e pular.
-- **Steam:** os jogos instalados com as capas, os jogados por último primeiro. Clique e o jogo abre. Atalhos para Biblioteca, Loja, Amigos e Downloads. Os últimos jogados também aparecem no Início, e a busca do Início acha jogos pelo nome.
+- **Steam:** duas abas. **Amigos** é o chat da Steam (quem está online, jogando o quê, e conversar). **Jogos** mostra os jogos instalados com as capas, os jogados por último primeiro. Clique e o jogo abre. Atalhos para Biblioteca, Loja, Amigos e Downloads. Os últimos jogados também aparecem no Início, e a busca do Início acha jogos pelo nome.
 - **ChatGPT e Gemini:** os sites oficiais, usando a sua conta gratuita. Pela busca do Início, `gpt sua pergunta` ou `gem sua pergunta` já envia a pergunta.
-- **Notas:** bloco de notas com salvamento automático. A primeira linha vira o título.
+- **Notas:** bloco de notas com salvamento automático. A primeira linha vira o título. Aceita imagens: cole com Ctrl+V (inclusive prints do Win+Shift+S) ou arraste um arquivo. Passe o mouse na imagem para **Copiar** (vai para a área de transferência, é só colar em outro app) ou **Salvar…** como PNG. Também dá para arrastar a imagem da nota direto para o Discord, WhatsApp ou uma pasta. Colar uma imagem na busca do Início guarda ela numa nota nova.
 - **Ajustes:** lado da tela, atalho, abrir ao passar o mouse, recolher ao clicar fora, iniciar com o Windows, tipo de vidro e atualizações.
 
 ### Comandos da busca

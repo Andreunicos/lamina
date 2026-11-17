@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'; frame-src https:;" />
+    content="default-src 'self'; img-src 'self' data: https: lamina-img:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'; frame-src https:;" />
   <title>Lâmina</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -201,19 +201,33 @@
             <button class="icon-btn" id="steamRefresh" aria-label="Atualizar lista de jogos" title="Atualizar lista"><svg><use href="#i-reload"/></svg></button>
           </div>
         </header>
-        <div class="chips" role="group" aria-label="Abrir na Steam">
-          <button class="chip" data-steam="library">Biblioteca</button>
-          <button class="chip" data-steam="store">Loja</button>
-          <button class="chip" data-steam="friends">Amigos</button>
-          <button class="chip" data-steam="downloads">Downloads</button>
+        <div class="segmented sub-tabs" role="tablist" aria-label="Steam">
+          <button type="button" role="tab" id="steamTabGames" aria-selected="true" aria-controls="steamGamesPane">Jogos</button>
+          <button type="button" role="tab" id="steamTabFriends" aria-selected="false" aria-controls="steamFriendsPane">Amigos</button>
         </div>
-        <label class="field">
-          <svg class="field-icon"><use href="#i-search"/></svg>
-          <input id="steamFilter" type="text" autocomplete="off" spellcheck="false" placeholder="Filtrar jogos" aria-label="Filtrar jogos" />
-        </label>
-        <p class="hint" id="steamInfo"></p>
-        <ul class="games" id="steamGames" aria-label="Jogos instalados"></ul>
-        <p class="empty" id="steamEmpty" hidden></p>
+        <div class="steam-pane" id="steamGamesPane" role="tabpanel" aria-labelledby="steamTabGames">
+          <div class="chips" role="group" aria-label="Abrir no app da Steam">
+            <button class="chip" data-steam="library">Biblioteca</button>
+            <button class="chip" data-steam="store">Loja</button>
+            <button class="chip" data-steam="downloads">Downloads</button>
+          </div>
+          <label class="field">
+            <svg class="field-icon"><use href="#i-search"/></svg>
+            <input id="steamFilter" type="text" autocomplete="off" spellcheck="false" placeholder="Filtrar jogos" aria-label="Filtrar jogos" />
+          </label>
+          <p class="hint" id="steamInfo"></p>
+          <ul class="games" id="steamGames" aria-label="Jogos instalados"></ul>
+          <p class="empty" id="steamEmpty" hidden></p>
+        </div>
+        <div class="steam-pane web-pane" id="steamFriendsPane" role="tabpanel" aria-labelledby="steamTabFriends" data-service="steamchat" hidden>
+          <div class="pane-actions">
+            <span class="hint">Entre com a sua conta da Steam (dá para usar o QR code do app da Steam no celular).</span>
+            <button class="icon-btn" data-act="zoom-out" aria-label="Diminuir a página" title="Diminuir a página"><svg><use href="#i-zoom-out"/></svg></button>
+            <button class="icon-btn" data-act="zoom-in" aria-label="Aumentar a página" title="Aumentar a página"><svg><use href="#i-zoom-in"/></svg></button>
+            <button class="icon-btn" data-act="reload" aria-label="Recarregar" title="Recarregar"><svg><use href="#i-reload"/></svg></button>
+          </div>
+          <div class="web-frame"><div class="progress"></div></div>
+        </div>
       </section>
 
       <!-- NOTAS -->
@@ -231,7 +245,13 @@
             <span class="saved" id="noteSaved" aria-live="polite"></span>
             <div class="actions"><button class="icon-btn danger" id="noteDelete" aria-label="Apagar nota" title="Apagar nota"><svg><use href="#i-trash"/></svg></button></div>
           </header>
-          <textarea id="noteBody" aria-label="Texto da nota" placeholder="Escreva aqui. A primeira linha vira o título."></textarea>
+          <div id="noteBody" class="note-body" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Texto da nota"
+            data-placeholder="Escreva ou cole uma imagem (Ctrl+V). A primeira linha vira o título." spellcheck="true"></div>
+          <div class="img-tools" id="imgTools" role="toolbar" aria-label="Imagem" hidden>
+            <button type="button" data-img="copy">Copiar</button>
+            <button type="button" data-img="export">Salvar…</button>
+            <button type="button" data-img="remove" aria-label="Tirar imagem da nota" title="Tirar da nota"><svg><use href="#i-trash"/></svg></button>
+          </div>
         </div>
       </section>
 

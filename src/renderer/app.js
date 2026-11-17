@@ -17,6 +17,7 @@
     music: { url: 'https://music.youtube.com/', partition: 'persist:music', title: 'YouTube Music' },
     chatgpt: { url: 'https://chatgpt.com/', partition: 'persist:chatgpt', title: 'ChatGPT' },
     gemini: { url: 'https://gemini.google.com/app', partition: 'persist:gemini', title: 'Gemini' },
+    steamchat: { url: 'https://steamcommunity.com/chat', partition: 'persist:steam', title: 'chat da Steam', frame: '#steamFriendsPane .web-frame' },
   };
   const VIEW_ORDER = ['home', 'apps', 'whatsapp', 'music', 'steam', 'chatgpt', 'gemini', 'notes'];
   const webviews = {};
@@ -131,7 +132,7 @@
 
   // ------------------------------------------------------------------ webviews
   function frameOf(key) {
-    return $(`#view-${key} .web-frame`);
+    return $(SERVICES[key].frame || `#view-${key} .web-frame`);
   }
 
   function showWebMessage(key, title, text, retry = true) {
@@ -210,7 +211,7 @@
     return ready[key];
   }
 
-  $$('.view.web').forEach((section) => {
+  $$('[data-service]').forEach((section) => {
     const key = section.dataset.service;
     section.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-act]');
@@ -381,6 +382,18 @@
     }
   });
   $('#steamRefresh').addEventListener('click', () => loadSteam(true));
+  function steamTab(which) {
+    const friends = which === 'friends';
+    $('#steamTabGames').setAttribute('aria-selected', String(!friends));
+    $('#steamTabFriends').setAttribute('aria-selected', String(friends));
+    $('#steamGamesPane').hidden = friends;
+    $('#steamFriendsPane').hidden = !friends;
+    $('#steamRefresh').hidden = friends;
+    if (friends) ensureWebview('steamchat');
+    else $('#steamFilter').focus();
+  }
+  $('#steamTabGames').addEventListener('click', () => steamTab('games'));
+  $('#steamTabFriends').addEventListener('click', () => steamTab('friends'));
 
   // ------------------------------------------------------------------ WhatsApp
   const waMessages = []; // só em memória: nada de conversa salvo em disco
@@ -782,6 +795,13 @@
   let notes = [];
   let editing = null;
   let saveTimer = null;
+  const editor = $('#noteBody');
+  const IMG_SRC = /^lamina-img:\/\/img\/([a-f0-9]{16}\.png)$/;
+  const imgUrl = (name) => `lamina-img://img/${name}`;
+  const imgName = (img) => {
+    const m = IMG_SRC.exec(img.getAttribute('src') || '');
+    return m ? m[1] : null;
+  };
 
   const fmtDate = (ts) => {
     const d = new Date(ts);
@@ -789,7 +809,40 @@
     if (d.toDateString() === today.toDateString()) return `hoje, ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
     return d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' });
   };
-  const preview = (n) => n.body.split('\n').slice(1).join(' ').trim().slice(0, 90);
+  const preview = (n) => (n.body || '').split('\n').slice(1).join(' ').trim().slice(0, 90);
+  const thumb = (n) => (n.images && n.images.length ? `<img class="thumb" alt="" src="${imgUrl(n.images[0])}" />` : '');
+
+  // Só texto, quebras de linha e as imagens do próprio app sobrevivem
+  function cleanHtml(html) {
+    const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
+    const out = document.createElement('div');
+    const walk = (src, dst) => {
+      for (const node of Array.from(src.childNodes)) {
+        if (node.nodeType === 3) dst.appendChild(document.createTextNode(node.textContent));
+        else if (node.nodeType !== 1) continue;
+        else if (node.tagName === 'BR') dst.appendChild(document.createElement('br'));
+        else if (node.tagName === 'IMG') {
+          const name = imgName(node);
+          if (name) dst.appendChild(makeImg(name));
+        } else if (node.tagName === 'DIV' || node.tagName === 'P') {
+          const d = document.createElement('div');
+          walk(node, d);
+          dst.appendChild(d);
+        } else walk(node, dst);
+      }
+    };
+    walk(doc.body.firstChild, out);
+    return out.innerHTML;
+  }
+  function makeImg(name) {
+    const img = document.createElement('img');
+    img.src = imgUrl(name);
+    img.className = 'note-img';
+    img.alt = 'Imagem colada';
+    img.draggable = true;
+    return img;
+  }
+  const textToHtml = (t) => esc(t || '').replace(/\n/g, '<br>');
 
   async function refreshNotes() {
     notes = (await api.notes.list()) || [];
@@ -798,7 +851,7 @@
   async function renderNoteList() {
     await refreshNotes();
     $('#noteList').innerHTML = notes
-      .map((n) => `<li><button type="button" data-id="${esc(n.id)}"><div class="t">${esc(n.title || 'Sem título')}</div>${preview(n) ? `<div class="p">${esc(preview(n))}</div>` : ''}<div class="d">${fmtDate(n.updated)}</div></button></li>`)
+      .map((n) => `<li><button type="button" data-id="${esc(n.id)}"><div class="row"><div><div class="t">${esc(n.title || 'Sem título')}</div>${preview(n) ? `<div class="p">${esc(preview(n))}</div>` : ''}<div class="d">${fmtDate(n.updated)}</div></div>${thumb(n)}</div></button></li>`)
       .join('');
     $('#notesEmpty').hidden = notes.length > 0;
   }
@@ -806,23 +859,42 @@
     await refreshNotes();
     $('#homeNotes').innerHTML = notes
       .slice(0, 3)
-      .map((n) => `<li><button type="button" data-id="${esc(n.id)}"><div class="t">${esc(n.title || 'Sem título')}</div><div class="d">${fmtDate(n.updated)}</div></button></li>`)
+      .map((n) => `<li><button type="button" data-id="${esc(n.id)}"><div class="row"><div><div class="t">${esc(n.title || 'Sem título')}</div><div class="d">${fmtDate(n.updated)}</div></div>${thumb(n)}</div></button></li>`)
       .join('');
     $('#homeNotesEmpty').hidden = notes.length > 0;
   }
 
   function openEditor(note) {
-    editing = note ? { ...note } : { id: null, body: '' };
+    editing = note ? { ...note } : { id: null, body: '', html: '' };
     $('#notesListPane').hidden = true;
     $('#noteEditorPane').hidden = false;
-    $('#noteBody').value = editing.body;
+    editor.innerHTML = editing.html != null && editing.html !== '' ? cleanHtml(editing.html) : textToHtml(editing.body);
+    editing.html = editor.innerHTML;
+    hideImgTools();
     $('#noteSaved').textContent = note ? `Editada ${fmtDate(note.updated)}` : 'Nova nota';
-    $('#noteBody').focus();
+    editor.focus();
+    // cursor no fim
+    const r = document.createRange();
+    r.selectNodeContents(editor);
+    r.collapse(false);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  function editorState() {
+    const html = cleanHtml(editor.innerHTML);
+    const body = editor.innerText.replace(/\n{3,}/g, '\n\n');
+    const images = $$('img', editor).map(imgName).filter(Boolean);
+    return { html, body, images };
   }
   async function closeEditor() {
     await flushNote();
-    if (editing && !editing.body.trim() && editing.id) await api.notes.remove(editing.id);
+    if (editing && editing.id) {
+      const st = editorState();
+      if (!st.body.trim() && !st.images.length) await api.notes.remove(editing.id);
+    }
     editing = null;
+    hideImgTools();
     $('#noteEditorPane').hidden = true;
     $('#notesListPane').hidden = false;
     renderNoteList();
@@ -834,22 +906,178 @@
   async function flushNote() {
     clearTimeout(saveTimer);
     if (!editing) return;
-    const body = $('#noteBody').value;
-    if (body === editing.body && editing.id) return;
-    if (!body.trim() && !editing.id) return;
-    const saved = await api.notes.save({ id: editing.id, body });
-    editing = { ...saved };
-    $('#noteSaved').textContent = 'Salva';
+    const st = editorState();
+    if (st.html === editing.html && editing.id) return;
+    if (!st.body.trim() && !st.images.length && !editing.id) return;
+    const saved = await api.notes.save({ id: editing.id, ...st });
+    if (editing) {
+      editing = { ...saved };
+      $('#noteSaved').textContent = 'Salva';
+    }
   }
-  $('#noteBody').addEventListener('input', () => {
+  function scheduleSave() {
     $('#noteSaved').textContent = 'Salvando…';
     clearTimeout(saveTimer);
     saveTimer = setTimeout(flushNote, 450);
+  }
+  editor.addEventListener('input', scheduleSave);
+
+  // Colar: imagem vira imagem salva; qualquer outra coisa entra como texto puro
+  async function storeImage(file) {
+    if (file.size > 40 * 1024 * 1024) {
+      toast('Imagem grande demais (máximo 40 MB).');
+      return null;
+    }
+    const res = await api.notes.saveImage(new Uint8Array(await file.arrayBuffer()));
+    if (!res || !res.ok) {
+      toast((res && res.error) || 'Não consegui salvar a imagem.', 3500);
+      return null;
+    }
+    return res.name;
+  }
+  async function insertImages(files) {
+    const range = getSelection().rangeCount ? getSelection().getRangeAt(0).cloneRange() : null;
+    let html = '';
+    for (const f of files) {
+      const name = await storeImage(f);
+      if (name) html += `<img src="${imgUrl(name)}" class="note-img" alt="Imagem colada"><br>`;
+    }
+    if (!html) return;
+    editor.focus();
+    if (range && editor.contains(range.startContainer)) {
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    document.execCommand('insertHTML', false, html);
+    $$('img', editor).forEach((img) => (img.draggable = true));
+    scheduleSave();
+  }
+  const imageFiles = (dt) =>
+    Array.from((dt && dt.items) || [])
+      .filter((i) => i.kind === 'file' && /^image\//.test(i.type))
+      .map((i) => i.getAsFile())
+      .filter(Boolean);
+  editor.addEventListener('paste', (e) => {
+    const files = imageFiles(e.clipboardData);
+    e.preventDefault();
+    if (files.length) return insertImages(files);
+    const text = e.clipboardData.getData('text/plain');
+    if (text) document.execCommand('insertText', false, text);
   });
+  editor.addEventListener('dragover', (e) => {
+    if (Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
+  });
+  editor.addEventListener('drop', (e) => {
+    const files = Array.from(e.dataTransfer.files || []).filter((f) => /^image\//.test(f.type));
+    if (!files.length) return;
+    e.preventDefault();
+    const pos = document.caretRangeFromPoint(e.clientX, e.clientY);
+    if (pos) {
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(pos);
+    }
+    insertImages(files);
+  });
+
+  // Copiar: se a seleção é só uma imagem, vai a imagem de verdade para a área de transferência
+  editor.addEventListener('copy', (e) => {
+    const sel = getSelection();
+    if (!sel.rangeCount) return;
+    const frag = sel.getRangeAt(0).cloneContents();
+    const imgs = frag.querySelectorAll('img');
+    if (imgs.length === 1 && !frag.textContent.trim()) {
+      e.preventDefault();
+      copyImage(imgName(imgs[0]));
+    }
+  });
+  async function copyImage(name) {
+    if (name && (await api.notes.copyImage(name))) toast('Imagem copiada. Cole onde quiser com Ctrl+V.');
+  }
+
+  // Barrinha que aparece em cima da imagem: Copiar / Salvar… / Tirar
+  const tools = $('#imgTools');
+  let toolsImg = null;
+  let hideTimer = null;
+  function showImgTools(img) {
+    clearTimeout(hideTimer);
+    if (toolsImg && toolsImg !== img) toolsImg.classList.remove('picked');
+    toolsImg = img;
+    const box = $('#noteEditorPane').getBoundingClientRect();
+    const r = img.getBoundingClientRect();
+    tools.hidden = false;
+    const top = Math.max(r.top, editor.getBoundingClientRect().top) - box.top + 8;
+    tools.style.top = `${top}px`;
+    tools.style.left = `${Math.max(8, r.right - box.left - tools.offsetWidth - 8)}px`;
+  }
+  function hideImgTools() {
+    clearTimeout(hideTimer);
+    tools.hidden = true;
+    if (toolsImg) toolsImg.classList.remove('picked');
+    toolsImg = null;
+  }
+  const hideSoon = () => {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!(toolsImg && toolsImg.classList.contains('picked'))) hideImgTools();
+    }, 350);
+  };
+  editor.addEventListener('mouseover', (e) => {
+    if (e.target.tagName === 'IMG') showImgTools(e.target);
+  });
+  editor.addEventListener('mouseout', (e) => {
+    if (e.target.tagName === 'IMG') hideSoon();
+  });
+  tools.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+  tools.addEventListener('mouseleave', hideSoon);
+  editor.addEventListener('scroll', hideImgTools);
+  // clicar na imagem seleciona ela (aí Ctrl+C copia a imagem)
+  editor.addEventListener('click', (e) => {
+    if (e.target.tagName !== 'IMG') {
+      if (toolsImg) hideImgTools();
+      return;
+    }
+    const img = e.target;
+    const r = document.createRange();
+    r.selectNode(img);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    showImgTools(img);
+    img.classList.add('picked');
+  });
+  editor.addEventListener('dragstart', (e) => {
+    if (e.target.tagName !== 'IMG') return;
+    const name = imgName(e.target);
+    if (!name) return;
+    e.preventDefault();
+    api.notes.dragImage(name);
+  });
+  tools.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-img]');
+    if (!b || !toolsImg) return;
+    const name = imgName(toolsImg);
+    if (b.dataset.img === 'copy') copyImage(name);
+    if (b.dataset.img === 'export') {
+      if (await api.notes.exportImage(name)) toast('Imagem salva');
+    }
+    if (b.dataset.img === 'remove') {
+      const img = toolsImg;
+      hideImgTools();
+      const next = img.nextSibling;
+      if (next && next.nodeName === 'BR') next.remove();
+      img.remove();
+      scheduleSave();
+    }
+  });
+
   $('#noteBack').addEventListener('click', closeEditor);
   $('#noteDelete').addEventListener('click', async () => {
+    clearTimeout(saveTimer);
     if (editing && editing.id) await api.notes.remove(editing.id);
     editing = null;
+    hideImgTools();
     $('#noteEditorPane').hidden = true;
     $('#notesListPane').hidden = false;
     toast('Nota apagada');
@@ -876,6 +1104,22 @@
     openNoteById(b.dataset.id);
   });
   window.addEventListener('beforeunload', () => flushNote());
+
+  // Colar uma imagem na busca do Início já guarda ela numa nota nova
+  omni.addEventListener('paste', async (e) => {
+    const files = imageFiles(e.clipboardData);
+    if (!files.length) return;
+    e.preventDefault();
+    const names = [];
+    for (const f of files) {
+      const n = await storeImage(f);
+      if (n) names.push(n);
+    }
+    if (!names.length) return;
+    await api.notes.save({ html: names.map((n) => `<img src="${imgUrl(n)}" class="note-img" alt="Imagem colada"><br>`).join(''), body: '', images: names });
+    toast('Imagem guardada em Notas');
+    renderHomeNotes();
+  });
 
   // ------------------------------------------------------------------ ajustes
   function applySettingsToForm() {

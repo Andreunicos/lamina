@@ -11,7 +11,13 @@ const {
   shell,
   session,
   Notification,
+  protocol,
+  net,
+  clipboard,
+  dialog,
 } = require('electron');
+const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -32,13 +38,22 @@ if (!app.requestSingleInstanceLock()) {
 }
 app.setAppUserModelId(APP_ID);
 
+// Imagens das notas ficam em %APPDATA%/Lamina/notes-images e são servidas por lamina-img://img/<arquivo>
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'lamina-img', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+const IMG_NAME = /^[a-f0-9]{16}\.png$/;
+const imagesDir = () => path.join(app.getPath('userData'), 'notes-images');
+const imagePath = (name) => (IMG_NAME.test(String(name)) ? path.join(imagesDir(), name) : null);
+let dialogOpen = false;
+
 // User agent de Chrome comum: alguns sites (WhatsApp Web, login do Google)
 // recusam navegadores que se identificam como Electron.
 const CHROME_MAJOR = String(process.versions.chrome || '140').split('.')[0];
 const CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
 app.userAgentFallback = CHROME_UA;
 
-const PARTITIONS = ['persist:whatsapp', 'persist:music', 'persist:chatgpt', 'persist:gemini'];
+const PARTITIONS = ['persist:whatsapp', 'persist:music', 'persist:chatgpt', 'persist:gemini', 'persist:steam'];
 const ALLOWED_PERMISSIONS = new Set([
   'notifications',
   'media',
@@ -250,7 +265,7 @@ function createWindow() {
     if (state !== 'expanded' || !settings.get('collapseOnBlur') || pinned) return;
     setTimeout(() => {
       // Não recolhe se o foco foi para uma janela do próprio app (ex.: pop-up de login)
-      if (BrowserWindow.getFocusedWindow()) return;
+      if (BrowserWindow.getFocusedWindow() || dialogOpen) return;
       if (state === 'expanded') collapse();
     }, 60);
   });
@@ -547,14 +562,64 @@ function setupIpc() {
   ipcMain.handle('notes:save', (_e, note) => {
     const items = notes.get('items');
     const now = Date.now();
-    const body = String(note.body || '');
+    const body = String(note.body || '').slice(0, 500000);
+    const html = typeof note.html === 'string' ? note.html.slice(0, 2000000) : null;
+    const images = Array.isArray(note.images) ? note.images.filter((n) => IMG_NAME.test(n)).slice(0, 200) : [];
     const idx = items.findIndex((n) => n.id === note.id);
-    const saved = { id: note.id || `n${now.toString(36)}`, body, title: noteTitle(body), updated: now };
+    const title = noteTitle(body) || (images.length ? (images.length > 1 ? `${images.length} imagens` : 'Imagem') : '');
+    const saved = { id: note.id || `n${now.toString(36)}`, body, html, images, title, updated: now };
     if (idx >= 0) items.splice(idx, 1);
     items.unshift(saved);
     notes.set('items', items);
     return saved;
   });
+  // Imagens das notas
+  ipcMain.handle('notes:image-save', async (_e, bytes) => {
+    try {
+      const img = nativeImage.createFromBuffer(Buffer.from(bytes));
+      if (img.isEmpty()) return { ok: false, error: 'Esse formato de imagem não é aceito. Use PNG ou JPG.' };
+      fs.mkdirSync(imagesDir(), { recursive: true });
+      const name = `${crypto.randomBytes(8).toString('hex')}.png`;
+      fs.writeFileSync(path.join(imagesDir(), name), img.toPNG());
+      const { width, height } = img.getSize();
+      return { ok: true, name, width, height };
+    } catch (err) {
+      return { ok: false, error: 'Não consegui salvar a imagem.' };
+    }
+  });
+  ipcMain.handle('notes:image-copy', (_e, name) => {
+    const file = imagePath(name);
+    if (!file || !fs.existsSync(file)) return false;
+    clipboard.writeImage(nativeImage.createFromPath(file));
+    return true;
+  });
+  ipcMain.handle('notes:image-export', async (_e, name) => {
+    const file = imagePath(name);
+    if (!file || !fs.existsSync(file)) return false;
+    dialogOpen = true;
+    try {
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      const res = await dialog.showSaveDialog(win, {
+        title: 'Salvar imagem',
+        defaultPath: path.join(app.getPath('pictures'), `lamina-${stamp}.png`),
+        filters: [{ name: 'Imagem PNG', extensions: ['png'] }],
+      });
+      if (res.canceled || !res.filePath) return false;
+      fs.copyFileSync(file, res.filePath);
+      return true;
+    } finally {
+      dialogOpen = false;
+      if (win && state === 'expanded') win.focus();
+    }
+  });
+  // Arrastar a imagem da nota para outro app (Discord, WhatsApp, pasta, etc.)
+  ipcMain.on('notes:image-drag', (e, name) => {
+    const file = imagePath(name);
+    if (!file || !fs.existsSync(file)) return;
+    const icon = nativeImage.createFromPath(file).resize({ width: 96 });
+    e.sender.startDrag({ file, icon });
+  });
+
   ipcMain.handle('notes:delete', (_e, id) => {
     notes.set(
       'items',
@@ -577,6 +642,25 @@ function setupIpc() {
   ipcMain.handle('update:install', () => updater.installNow());
 }
 
+// Apaga imagens que nenhuma nota usa mais (de notas apagadas ou imagens removidas).
+// Só roda ao abrir o app, para o Ctrl+Z no editor continuar funcionando durante o uso.
+function cleanupImages() {
+  try {
+    const used = new Set();
+    for (const n of notes.get('items')) for (const name of n.images || []) used.add(name);
+    const dir = imagesDir();
+    if (!fs.existsSync(dir)) return;
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync(dir)) {
+      if (!IMG_NAME.test(f) || used.has(f)) continue;
+      const full = path.join(dir, f);
+      if (fs.statSync(full).mtimeMs < dayAgo) fs.unlinkSync(full);
+    }
+  } catch (err) {
+    console.error('[limpeza de imagens]', err);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Início
 // ---------------------------------------------------------------------------
@@ -585,6 +669,19 @@ app.on('second-instance', () => expand());
 app.whenReady().then(() => {
   settings = createStore('settings', SETTINGS_DEFAULTS);
   notes = createStore('notes', { items: [] });
+
+  protocol.handle('lamina-img', (req) => {
+    let file = null;
+    try {
+      const u = new URL(req.url);
+      if (u.hostname === 'img') file = imagePath(u.pathname.replace(/^\//, ''));
+    } catch {
+      /* URL inválida */
+    }
+    if (!file || !fs.existsSync(file)) return new Response('Imagem não encontrada', { status: 404 });
+    return net.fetch(pathToFileURL(file).toString());
+  });
+  cleanupImages();
 
   setupSessions();
   setupIpc();

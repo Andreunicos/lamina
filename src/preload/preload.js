@@ -33,6 +33,10 @@ contextBridge.exposeInMainWorld('lamina', {
     list: () => ipcRenderer.invoke('notes:list'),
     save: (note) => ipcRenderer.invoke('notes:save', note),
     remove: (id) => ipcRenderer.invoke('notes:delete', id),
+    saveImage: (bytes) => ipcRenderer.invoke('notes:image-save', bytes),
+    copyImage: (name) => ipcRenderer.invoke('notes:image-copy', name),
+    exportImage: (name) => ipcRenderer.invoke('notes:image-export', name),
+    dragImage: (name) => ipcRenderer.send('notes:image-drag', name),
   },
   apps: {
     list: (refresh) => ipcRenderer.invoke('apps:list', refresh),
