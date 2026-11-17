@@ -1,6 +1,6 @@
 # Lâmina
 
-Uma barra lateral de vidro fosco para o Windows. Fica escondida como uma alça fina na borda da tela e abre com um clique ou com **Ctrl + Alt + Espaço**.
+Uma barra lateral de vidro fosco para o Windows. Fica escondida como uma alça fina na borda da tela e abre com um clique ou com **Alt + aspas** (a tecla `'` ao lado do 1 no teclado ABNT2).
 
 ## O que tem dentro
 

@@ -51,7 +51,7 @@ const POPUP_HOSTS = /(^|\.)(accounts\.google\.com|auth\.openai\.com|auth0\.opena
 
 const SETTINGS_DEFAULTS = {
   side: 'right',
-  shortcut: 'Control+Alt+Space',
+  shortcut: 'Alt+Quote',
   hoverOpen: false,
   collapseOnBlur: true,
   openAtLogin: true,
@@ -318,14 +318,26 @@ function setupSessions() {
 // ---------------------------------------------------------------------------
 // Atalho global, bandeja, inicialização
 // ---------------------------------------------------------------------------
+// "Alt+Quote" = Alt + tecla de aspas. No teclado ABNT2 essa tecla (ao lado do 1) é a
+// mesma posição do ` no teclado americano; no americano as aspas ficam ao lado do Enter.
+// Registra as duas para funcionar em qualquer layout.
+const SHORTCUT_ALIASES = {
+  'Alt+Quote': ['Alt+`', "Alt+'"],
+};
+
 function registerShortcut(accel) {
   globalShortcut.unregisterAll();
   if (!accel) return true;
-  try {
-    return globalShortcut.register(accel, toggle);
-  } catch {
-    return false;
+  const list = SHORTCUT_ALIASES[accel] || [accel];
+  let ok = false;
+  for (const a of list) {
+    try {
+      if (globalShortcut.register(a, toggle)) ok = true;
+    } catch {
+      /* acelerador inválido neste sistema */
+    }
   }
+  return ok;
 }
 
 function applyLoginItem() {
