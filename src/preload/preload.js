@@ -48,7 +48,19 @@ contextBridge.exposeInMainWorld('lamina', {
     install: () => ipcRenderer.invoke('update:install'),
   },
 
+  clipboard: {
+    list: () => ipcRenderer.invoke('clip:list'),
+    restore: (id) => ipcRenderer.invoke('clip:restore', id),
+    remove: (id) => ipcRenderer.invoke('clip:remove', id),
+    clear: () => ipcRenderer.invoke('clip:clear'),
+  },
+  monitor: {
+    read: () => ipcRenderer.invoke('monitor:read'),
+  },
+  notify: (title, body) => ipcRenderer.invoke('app:notify', title, body),
+
   onState: on('state'),
+  onClipboard: on('clip:changed'),
   onSide: on('side'),
   onOpenView: on('view:open'),
   onUpdateStatus: on('update:status'),

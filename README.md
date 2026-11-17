@@ -11,7 +11,12 @@ Uma barra lateral de vidro fosco para o Windows. Fica escondida como uma alça f
 - **Steam:** duas abas. **Amigos** é o chat da Steam (quem está online, jogando o quê, e conversar). **Jogos** mostra os jogos instalados com as capas, os jogados por último primeiro. Clique e o jogo abre. Atalhos para Biblioteca, Loja, Amigos e Downloads. Os últimos jogados também aparecem no Início, e a busca do Início acha jogos pelo nome.
 - **ChatGPT e Gemini:** os sites oficiais, usando a sua conta gratuita. Pela busca do Início, `gpt sua pergunta` ou `gem sua pergunta` já envia a pergunta.
 - **Notas:** bloco de notas com salvamento automático. A primeira linha vira o título. Aceita imagens: cole com Ctrl+V (inclusive prints do Win+Shift+S) ou arraste um arquivo. Passe o mouse na imagem para **Copiar** (vai para a área de transferência, é só colar em outro app) ou **Salvar…** como PNG. Também dá para arrastar a imagem da nota direto para o Discord, WhatsApp ou uma pasta. Colar uma imagem na busca do Início guarda ela numa nota nova.
-- **Ajustes:** lado da tela, atalho, abrir ao passar o mouse, recolher ao clicar fora, iniciar com o Windows, tipo de vidro e atualizações.
+- **Transferência:** histórico do que você copia (textos e imagens). Clique num item para copiá-lo de novo. Dá para remover um item ou limpar tudo. Fica só neste computador.
+- **Tempo:** cronômetro rápido (5, 10, 15, 25, 45 min, 1 h ou personalizado) e Pomodoro (25 de foco / 5 de pausa, pausa de 15 a cada 4 focos). Avisa com som e notificação quando termina, mesmo com a barra recolhida.
+- **Sistema (no Início):** uso de CPU, memória e GPU ao vivo. Temperatura e uso da GPU aparecem quando há placa NVIDIA (via nvidia-smi).
+- **Ajustes:** lado da tela, atalho, abrir ao passar o mouse, recolher ao clicar fora, iniciar com o Windows, **modo imersivo**, histórico da área de transferência, tipo de vidro e atualizações.
+
+**Modo imersivo:** nos Ajustes, some com a alça da borda de vez. A barra fica 100% invisível e só aparece com o atalho (Alt + aspas). Bom pra quem não quer nada na beirada da tela.
 
 ### Comandos da busca
 
@@ -23,7 +28,7 @@ Uma barra lateral de vidro fosco para o Windows. Fica escondida como uma alça f
 | `tocar ...` ou `m ...` | toca no YouTube Music |
 | `nota ...` | salva uma nota |
 
-Atalhos dentro da barra: `Ctrl+1` a `Ctrl+8` trocam de seção, `Ctrl+N` cria nota, `Esc` recolhe.
+Atalhos dentro da barra: `Ctrl+1` a `Ctrl+9` trocam de seção, `Ctrl+N` cria nota, `Esc` recolhe.
 
 **Largura:** arraste a borda de dentro da barra (a que não encosta na tela) para deixar mais larga ou mais estreita. Duplo clique nela volta ao tamanho padrão. A largura fica salva.
 

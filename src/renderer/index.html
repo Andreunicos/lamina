@@ -32,6 +32,9 @@
       <symbol id="i-pad" viewBox="0 0 24 24"><path d="M7.5 8h9a4.5 4.5 0 0 1 4.3 5.8l-1.2 3.9a2.2 2.2 0 0 1-3.8.7L14 16h-4l-1.8 2.4a2.2 2.2 0 0 1-3.8-.7l-1.2-3.9A4.5 4.5 0 0 1 7.5 8z"/><path d="M8 11v3M6.5 12.5h3"/><circle cx="15.5" cy="11.5" r=".6" fill="currentColor"/><circle cx="17" cy="13.2" r=".6" fill="currentColor"/></symbol>
       <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5"/></symbol>
       <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5M10.5 8v5"/></symbol>
+      <symbol id="i-clip" viewBox="0 0 24 24"><rect x="7" y="4" width="10" height="16" rx="2.4"/><path d="M9.5 4V3.2A1.2 1.2 0 0 1 10.7 2h2.6a1.2 1.2 0 0 1 1.2 1.2V4"/><path d="M9.5 9h5M9.5 12h5M9.5 15h3"/></symbol>
+      <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9M9.5 2h5M12 6V2"/></symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.6"/><path d="M10 4v3M14 4v3M10 17v3M14 17v3M4 10h3M4 14h3M17 10h3M17 14h3"/></symbol>
       <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></symbol>
     </defs>
   </svg>
@@ -55,6 +58,8 @@
       <button class="rail-btn" role="tab" data-view="chatgpt" aria-label="ChatGPT" title="ChatGPT (Ctrl+6)"><svg><use href="#i-orbit"/></svg></button>
       <button class="rail-btn" role="tab" data-view="gemini" aria-label="Gemini" title="Gemini (Ctrl+7)"><svg><use href="#i-prism"/></svg></button>
       <button class="rail-btn" role="tab" data-view="notes" aria-label="Notas" title="Notas (Ctrl+8)"><svg><use href="#i-note"/></svg></button>
+      <button class="rail-btn" role="tab" data-view="clipboard" aria-label="Transferência" title="Área de transferência (Ctrl+9)"><svg><use href="#i-clip"/></svg></button>
+      <button class="rail-btn" role="tab" data-view="timer" aria-label="Tempo" title="Timer e Pomodoro"><svg><use href="#i-timer"/></svg><span class="count" hidden></span></button>
       <span class="rail-gap"></span>
       <button class="rail-btn" role="tab" data-view="settings" aria-label="Ajustes" title="Ajustes"><svg><use href="#i-sliders"/></svg></button>
       <button class="rail-btn tool" id="pinBtn" aria-pressed="false" aria-label="Manter aberta" title="Manter aberta ao clicar fora"><svg><use href="#i-pin"/></svg></button>
@@ -93,6 +98,11 @@
                 <button class="icon-btn" id="npNext" aria-label="Próxima"><svg><use href="#i-next"/></svg></button>
               </div>
             </div>
+          </section>
+
+          <section class="block" id="sysBlock" hidden aria-labelledby="hSys">
+            <h2 id="hSys">Sistema</h2>
+            <div class="sys-meters" id="sysMeters"></div>
           </section>
 
           <section class="block" id="recentBlock" hidden aria-labelledby="hRecent">
@@ -230,6 +240,49 @@
         </div>
       </section>
 
+      <!-- ÁREA DE TRANSFERÊNCIA -->
+      <section class="view" id="view-clipboard" role="tabpanel" aria-label="Área de transferência">
+        <header class="view-head"><h1>Transferência</h1>
+          <div class="actions"><button class="btn ghost" id="clipClear">Limpar tudo</button></div>
+        </header>
+        <p class="hint">O que você copia aparece aqui. Clique para copiar de novo.</p>
+        <ul class="clip-list" id="clipList" aria-label="Itens copiados"></ul>
+        <p class="empty" id="clipEmpty" hidden>Nada copiado ainda. Copie um texto ou uma imagem e ele aparece aqui.</p>
+        <p class="empty" id="clipOff" hidden>O histórico está desligado. Ligue em Ajustes.</p>
+      </section>
+
+      <!-- TIMER -->
+      <section class="view" id="view-timer" role="tabpanel" aria-label="Timer">
+        <header class="view-head"><h1>Tempo</h1></header>
+        <div class="timer-wrap">
+          <div class="timer-display" id="timerDisplay">25:00</div>
+          <div class="timer-sub" id="timerSub">Pronto</div>
+          <div class="timer-controls">
+            <button class="icon-btn" id="timerReset" aria-label="Zerar" title="Zerar"><svg><use href="#i-reload"/></svg></button>
+            <button class="icon-btn big" id="timerToggle" aria-label="Começar"><svg><use href="#i-play"/></svg></button>
+            <button class="icon-btn" id="timerStop" aria-label="Parar" title="Parar"><svg><use href="#i-edge"/></svg></button>
+          </div>
+        </div>
+        <div class="chips" role="group" aria-label="Tempos rápidos">
+          <button class="chip" data-min="5">5 min</button>
+          <button class="chip" data-min="10">10 min</button>
+          <button class="chip" data-min="15">15 min</button>
+          <button class="chip" data-min="25">25 min</button>
+          <button class="chip" data-min="45">45 min</button>
+          <button class="chip" data-min="60">1 h</button>
+        </div>
+        <form class="field timer-custom" id="timerCustomForm">
+          <input id="timerCustom" type="number" min="1" max="600" inputmode="numeric" placeholder="Minutos" aria-label="Minutos personalizados" />
+          <button type="submit" class="btn">Começar</button>
+        </form>
+        <div class="pomo">
+          <h2>Pomodoro</h2>
+          <p class="hint">Ciclos de 25 min de foco e 5 de pausa. A cada 4 focos, uma pausa de 15.</p>
+          <button class="btn accent" id="pomoToggle">Iniciar Pomodoro</button>
+          <p class="hint" id="pomoStatus" aria-live="polite"></p>
+        </div>
+      </section>
+
       <!-- NOTAS -->
       <section class="view" id="view-notes" role="tabpanel" aria-label="Notas">
         <div class="notes-list" id="notesListPane">
@@ -283,6 +336,13 @@
             <label class="row switch"><span>Abrir ao passar o mouse na alça</span><input type="checkbox" role="switch" data-setting="hoverOpen" /></label>
             <label class="row switch"><span>Recolher ao clicar fora</span><input type="checkbox" role="switch" data-setting="collapseOnBlur" /></label>
             <label class="row switch"><span>Iniciar junto com o Windows</span><input type="checkbox" role="switch" data-setting="openAtLogin" /></label>
+            <label class="row switch"><span>Modo imersivo <small>(some a alça; só abre com o atalho)</small></span><input type="checkbox" role="switch" data-setting="immersive" /></label>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Área de transferência</legend>
+            <label class="row switch"><span>Guardar histórico do que eu copio</span><input type="checkbox" role="switch" data-setting="clipboardHistory" /></label>
+            <p class="hint">Fica só neste computador. Cuidado ao copiar senhas: elas também entram no histórico até você limpar.</p>
           </fieldset>
 
           <fieldset class="group">

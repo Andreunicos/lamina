@@ -500,3 +500,42 @@ input[type='checkbox'][role='switch']:focus-visible { outline: 2px solid var(--a
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { transition: none !important; }
+
+/* ------------------------------------------------------------------ sistema (início) */
+.sys-meters { display: flex; flex-direction: column; gap: 12px; }
+.meter { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 10px; }
+.meter .m-ico { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--frost); color: var(--mist); }
+.meter .m-ico svg { width: 17px; height: 17px; }
+.meter .m-bar { height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.10); overflow: hidden; }
+.meter .m-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, #6fb6ff, var(--amber)); transition: width 0.6s var(--ease); }
+.meter .m-val { font: 600 var(--t-sm) var(--f-display); font-variant-numeric: tabular-nums; min-width: 42px; text-align: right; }
+.meter .m-sub { grid-column: 2 / 4; margin-top: -4px; font-size: var(--t-xs); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ------------------------------------------------------------------ transferência */
+.clip-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.clip-item { display: flex; align-items: stretch; gap: 4px; }
+.clip-main {
+  flex: 1; min-width: 0; text-align: left; border: 0; border-radius: 10px;
+  background: var(--frost); box-shadow: inset 0 0 0 1px var(--line);
+  padding: 10px 12px; display: flex; align-items: center; gap: 10px;
+}
+.clip-main:hover { background: var(--frost-hi); }
+.clip-text { font-size: var(--t-sm); color: var(--ink); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.clip-thumb { width: 46px; height: 46px; border-radius: 7px; object-fit: cover; box-shadow: 0 0 0 1px var(--line); flex: none; }
+.clip-meta { font-size: var(--t-xs); color: var(--dim); }
+.clip-x { width: 34px; flex: none; border-radius: 10px; color: var(--dim); }
+.clip-x:hover { color: var(--danger); background: var(--frost); }
+
+/* ------------------------------------------------------------------ timer */
+.timer-wrap { text-align: center; padding: 14px 0 20px; }
+.timer-display { font: 500 76px/0.95 var(--f-display); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.timer-display.ending { color: var(--amber); }
+.timer-sub { margin-top: 8px; color: var(--mist); font-size: var(--t-sm); }
+.timer-controls { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 20px; }
+.timer-custom { display: flex; gap: 8px; margin: 14px 0; padding: 0; background: none; box-shadow: none; height: auto; }
+.timer-custom input { flex: 1; height: 44px; padding: 0 14px; border: 0; border-radius: var(--r-field); background: var(--frost); box-shadow: inset 0 0 0 1px var(--line); font-size: var(--t-md); }
+.timer-custom .btn { align-self: stretch; }
+.pomo { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px; }
+.pomo h2 { margin: 0 0 6px; font: 600 var(--t-sm) var(--f-display); color: var(--mist); letter-spacing: 0.02em; }
+.pomo .btn { margin-top: 6px; }
+.row small { color: var(--dim); font-size: var(--t-xs); font-weight: 400; }

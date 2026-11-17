@@ -19,7 +19,7 @@
     gemini: { url: 'https://gemini.google.com/app', partition: 'persist:gemini', title: 'Gemini' },
     steamchat: { url: 'https://steamcommunity.com/chat', partition: 'persist:steam', title: 'chat da Steam', frame: '#steamFriendsPane .web-frame' },
   };
-  const VIEW_ORDER = ['home', 'apps', 'whatsapp', 'music', 'steam', 'chatgpt', 'gemini', 'notes'];
+  const VIEW_ORDER = ['home', 'apps', 'whatsapp', 'music', 'steam', 'chatgpt', 'gemini', 'notes', 'clipboard', 'timer'];
   const webviews = {};
   const ready = {};
 
@@ -47,8 +47,10 @@
         if (currentView === 'home') $('#omni').focus();
       });
     }
+    updateMonitor();
   }
   api.onState(setState);
+
   api.onSide((side) => {
     document.body.classList.remove('side-left', 'side-right');
     document.body.classList.add(`side-${side}`);
@@ -82,9 +84,13 @@
     if (SERVICES[view]) ensureWebview(view);
     if (view === 'apps') loadApps().then(() => $('#appsFilter').focus());
     if (view === 'notes') renderNoteList();
+    if (view === 'clipboard') renderClip();
+    updateMonitor();
     if (view === 'steam') loadSteam().then(() => $('#steamFilter').focus());
     if (view === 'home') {
       renderHomeNotes();
+      if (steamData) renderHomeGames();
+      updateMonitor();
       setTimeout(() => $('#omni').focus(), 30);
     }
     if (view === 'music') setTimeout(() => $('#musicQuery').focus(), 30);
@@ -103,7 +109,7 @@
   $$('[data-go]').forEach((b) => b.addEventListener('click', () => openView(b.dataset.go)));
 
   document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-8]$/.test(e.key)) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
       e.preventDefault();
       openView(VIEW_ORDER[Number(e.key) - 1]);
     } else if (e.key === 'Escape') {
@@ -1121,6 +1127,246 @@
     renderHomeNotes();
   });
 
+  // ------------------------------------------------------------------ transferência
+  let clipItems = [];
+  function renderClip(listData) {
+    if (listData) clipItems = listData;
+    const disabled = settings ? !settings.clipboardHistory : false;
+    $('#clipOff').hidden = !disabled;
+    const ul = $('#clipList');
+    if (disabled) {
+      ul.innerHTML = '';
+      $('#clipEmpty').hidden = true;
+      return;
+    }
+    ul.innerHTML = clipItems
+      .map((it) => {
+        const body =
+          it.type === 'image'
+            ? `<img class="clip-thumb" alt="" src="lamina-img://clip/${esc(it.image)}" /><span class="clip-meta">Imagem ${it.w}×${it.h}</span>`
+            : `<span class="clip-text">${esc((it.text || '').slice(0, 240))}</span>`;
+        return `<li class="clip-item"><button class="clip-main" type="button" data-copy="${esc(it.id)}">${body}</button><button class="icon-btn clip-x" data-del="${esc(it.id)}" aria-label="Remover"><svg><use href="#i-trash"/></svg></button></li>`;
+      })
+      .join('');
+    $('#clipEmpty').hidden = clipItems.length > 0;
+  }
+  async function loadClip() {
+    clipItems = (await api.clipboard.list()) || [];
+    renderClip();
+  }
+  api.onClipboard((listData) => {
+    clipItems = listData || [];
+    if (currentView === 'clipboard') renderClip();
+  });
+  $('#clipList').addEventListener('click', async (e) => {
+    const copy = e.target.closest('[data-copy]');
+    const del = e.target.closest('[data-del]');
+    if (copy) {
+      if (await api.clipboard.restore(copy.dataset.copy)) toast('Copiado. Cole onde quiser com Ctrl+V.');
+    } else if (del) {
+      await api.clipboard.remove(del.dataset.del);
+      loadClip();
+    }
+  });
+  $('#clipClear').addEventListener('click', async () => {
+    await api.clipboard.clear();
+    loadClip();
+  });
+
+  // ------------------------------------------------------------------ monitor do PC
+  let monTimer = null;
+  const monIcons = { cpu: '#i-cpu', mem: '#i-apps', gpu: '#i-prism' };
+  function meter(key, label, percent, sub) {
+    const pct = percent == null ? null : Math.round(percent);
+    return `<div class="meter">
+      <span class="m-ico"><svg><use href="${monIcons[key]}"/></svg></span>
+      <div class="m-bar"><div class="m-fill" style="width:${pct == null ? 0 : pct}%"></div></div>
+      <span class="m-val">${pct == null ? '—' : pct + '%'}</span>
+      <span class="m-sub">${esc(label)}${sub ? ' · ' + esc(sub) : ''}</span>
+    </div>`;
+  }
+  async function pollMonitor() {
+    try {
+      const m = await api.monitor.read();
+      const rows = [
+        meter('cpu', 'CPU', m.cpu.percent, m.cpu.cores ? `${m.cpu.cores} núcleos` : ''),
+        meter('mem', 'Memória', m.mem.percent, `${m.mem.usedGB} de ${m.mem.totalGB} GB`),
+      ];
+      if (m.gpu) {
+        const vram = m.gpu.vramTotalMB ? `${(m.gpu.vramUsedMB / 1024).toFixed(1)}/${(m.gpu.vramTotalMB / 1024).toFixed(1)} GB` : '';
+        const sub = [m.gpu.name, m.gpu.tempC ? `${m.gpu.tempC}°C` : '', vram].filter(Boolean).join(' · ');
+        rows.push(meter('gpu', 'GPU', m.gpu.percent, sub));
+      }
+      $('#sysMeters').innerHTML = rows.join('');
+      $('#sysBlock').hidden = false;
+    } catch {
+      $('#sysBlock').hidden = true;
+    }
+  }
+  function updateMonitor() {
+    const active = currentView === 'home' && document.body.classList.contains('is-expanded') && info && info.platform === 'win32';
+    if (active && !monTimer) {
+      pollMonitor();
+      monTimer = setInterval(pollMonitor, 2000);
+    } else if (!active && monTimer) {
+      clearInterval(monTimer);
+      monTimer = null;
+    }
+  }
+
+  // ------------------------------------------------------------------ timer e pomodoro
+  const T = {
+    remaining: 25 * 60,
+    total: 25 * 60,
+    running: false,
+    endAt: 0,
+    tick: null,
+    pomo: false,
+    phase: 'focus', // focus | short | long
+    focusCount: 0,
+    label: 'Pronto',
+  };
+  const PHASE = { focus: { min: 25, name: 'Foco' }, short: { min: 5, name: 'Pausa curta' }, long: { min: 15, name: 'Pausa longa' } };
+  function fmt(sec) {
+    sec = Math.max(0, Math.round(sec));
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    const mm = T.total >= 3600 ? String(Math.floor(sec / 60)).padStart(2, '0') : String(m).padStart(2, '0');
+    return `${mm}:${String(s).padStart(2, '0')}`;
+  }
+  function paintTimer() {
+    $('#timerDisplay').textContent = fmt(T.remaining);
+    $('#timerDisplay').classList.toggle('ending', T.running && T.remaining <= 10);
+    $('#timerSub').textContent = T.pomo ? `Pomodoro — ${PHASE[T.phase].name}` : T.label;
+    const t = $('#timerToggle');
+    t.setAttribute('aria-label', T.running ? 'Pausar' : 'Começar');
+    $('use', t).setAttribute('href', T.running ? '#i-pause' : '#i-play');
+    const badge = $('.rail-btn[data-view="timer"] .count');
+    if (T.running) {
+      badge.hidden = false;
+      badge.textContent = T.remaining >= 60 ? `${Math.ceil(T.remaining / 60)}` : `${Math.ceil(T.remaining)}s`;
+    } else badge.hidden = true;
+    if (T.pomo) $('#pomoToggle').textContent = 'Parar Pomodoro';
+    else $('#pomoToggle').textContent = 'Iniciar Pomodoro';
+    $('#pomoStatus').textContent = T.pomo ? `Focos concluídos: ${T.focusCount}` : '';
+  }
+  function setTimer(min, label) {
+    stopTick();
+    T.total = Math.round(min * 60);
+    T.remaining = T.total;
+    T.running = false;
+    T.pomo = false;
+    T.label = label || `${min} min`;
+    paintTimer();
+  }
+  function stopTick() {
+    clearInterval(T.tick);
+    T.tick = null;
+    T.running = false;
+  }
+  function startTick() {
+    if (T.remaining <= 0) return;
+    T.running = true;
+    T.endAt = Date.now() + T.remaining * 1000;
+    clearInterval(T.tick);
+    T.tick = setInterval(() => {
+      T.remaining = (T.endAt - Date.now()) / 1000;
+      if (T.remaining <= 0) {
+        T.remaining = 0;
+        finishTimer();
+      }
+      paintTimer();
+    }, 250);
+    paintTimer();
+  }
+  function beep() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const notes = [880, 1174];
+      notes.forEach((f, i) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.frequency.value = f;
+        o.type = 'sine';
+        o.connect(g);
+        g.connect(ctx.destination);
+        const t0 = ctx.currentTime + i * 0.22;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+        o.start(t0);
+        o.stop(t0 + 0.22);
+      });
+      setTimeout(() => ctx.close(), 800);
+    } catch { /* sem áudio */ }
+  }
+  function finishTimer() {
+    stopTick();
+    beep();
+    api.expand('timer');
+    if (T.pomo) {
+      const wasFocus = T.phase === 'focus';
+      if (wasFocus) T.focusCount += 1;
+      const done = wasFocus ? 'Foco concluído!' : 'Pausa encerrada!';
+      api.notify('Lâmina — Pomodoro', wasFocus ? 'Hora da pausa.' : 'De volta ao foco.');
+      toast(done, 4000);
+      T.phase = wasFocus ? (T.focusCount % 4 === 0 ? 'long' : 'short') : 'focus';
+      T.total = PHASE[T.phase].min * 60;
+      T.remaining = T.total;
+      paintTimer();
+      startTick();
+    } else {
+      api.notify('Lâmina', `${T.label} — tempo esgotado.`);
+      toast(`${T.label}: tempo esgotado`, 4000);
+      T.remaining = T.total;
+      paintTimer();
+    }
+  }
+  $('#timerToggle').addEventListener('click', () => {
+    if (T.running) {
+      stopTick();
+      paintTimer();
+    } else {
+      if (T.remaining <= 0) T.remaining = T.total;
+      startTick();
+    }
+  });
+  $('#timerReset').addEventListener('click', () => {
+    stopTick();
+    T.remaining = T.total;
+    paintTimer();
+  });
+  $('#timerStop').addEventListener('click', () => {
+    T.pomo = false;
+    setTimer(25, 'Pronto');
+  });
+  $$('#view-timer .chip[data-min]').forEach((c) =>
+    c.addEventListener('click', () => {
+      setTimer(Number(c.dataset.min));
+      startTick();
+    })
+  );
+  $('#timerCustomForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const min = Math.max(1, Math.min(600, Number($('#timerCustom').value) || 0));
+    if (!min) return;
+    setTimer(min);
+    startTick();
+  });
+  $('#pomoToggle').addEventListener('click', () => {
+    if (T.pomo) {
+      T.pomo = false;
+      setTimer(25, 'Pronto');
+      return;
+    }
+    T.pomo = true;
+    T.phase = 'focus';
+    T.focusCount = 0;
+    T.total = PHASE.focus.min * 60;
+    T.remaining = T.total;
+    startTick();
+  });
+
   // ------------------------------------------------------------------ ajustes
   function applySettingsToForm() {
     $$('input[name="side"]').forEach((r) => (r.checked = r.value === settings.side));
@@ -1216,8 +1462,10 @@
     $('#appVersion').textContent = info.version;
     applySettingsToForm();
     renderUpdate(info.updateStatus);
+    paintTimer();
     openView('home');
     renderWaFeed();
+    loadClip();
     if (settings.preloadWhatsApp) ensureWebview('whatsapp');
     if (info.platform === 'win32') {
       loadApps();

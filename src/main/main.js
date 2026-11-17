@@ -24,6 +24,8 @@ const { pathToFileURL } = require('url');
 const { createStore } = require('./store');
 const apps = require('./apps');
 const steam = require('./steam');
+const clip = require('./clip');
+const sysmon = require('./sysmon');
 const updater = require('./updater');
 
 const APP_ID = 'com.andreunicos.lamina';
@@ -76,6 +78,8 @@ const SETTINGS_DEFAULTS = {
   autoInstall: true,
   preloadWhatsApp: true,
   panelWidth: 440,
+  immersive: false,
+  clipboardHistory: true,
   reducedMotion: false,
   lastVersion: null,
   firstRunDone: false,
@@ -189,19 +193,39 @@ function expand(view) {
 let lastCollapseAt = 0;
 function collapse() {
   if (!win || state !== 'expanded') return;
-  state = 'collapsed';
+  const immersive = settings.get('immersive');
+  state = immersive ? 'hidden' : 'collapsed';
   lastCollapseAt = Date.now();
   const b = expandedBounds();
   animate({ ...b, x: b.x + slideOffset() }, b.x, 1, 0, 140, () => {
-    send('state', state);
+    send('state', 'collapsed');
     setTimeout(() => {
-      if (!win || win.isDestroyed() || state !== 'collapsed') return;
-      win.setBounds(collapsedBounds());
-      win.setOpacity(1);
-      win.showInactive();
+      if (!win || win.isDestroyed() || state === 'expanded') return;
+      if (immersive) {
+        win.hide(); // modo imersivo: some de vez, só volta com o atalho
+      } else {
+        win.setBounds(collapsedBounds());
+        win.setOpacity(1);
+        win.showInactive();
+      }
       updater.notifyIdle();
     }, 40);
   });
+}
+
+// Liga/desliga o modo imersivo na hora
+function applyImmersive(on) {
+  if (!win) return;
+  if (on && state === 'collapsed') {
+    state = 'hidden';
+    win.hide();
+  } else if (!on && state === 'hidden') {
+    state = 'collapsed';
+    win.setBounds(collapsedBounds());
+    win.setOpacity(1);
+    win.showInactive();
+  }
+  buildTrayMenu();
 }
 
 function hideAll() {
@@ -295,10 +319,14 @@ function createWindow() {
     query: { glass: mode, side: settings.get('side') },
   });
   win.once('ready-to-show', () => {
-    win.showInactive();
     if (!settings.get('firstRunDone')) {
       settings.set('firstRunDone', true);
+      win.showInactive();
       setTimeout(() => expand('home'), 400);
+    } else if (settings.get('immersive')) {
+      state = 'hidden'; // imersivo: começa invisível, só abre no atalho
+    } else {
+      win.showInactive();
     }
   });
 }
@@ -308,6 +336,7 @@ function createWindow() {
 // se identifica como Firefox, que o Google aceita; fora delas volta a ser Chrome.
 const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
 const GOOGLE_LOGIN = /^https:\/\/accounts\.google\.com\//i;
+const SERVICE_RETURN = /(gemini\.google\.com|chatgpt\.com|chat\.openai\.com|steamcommunity\.com)$/i;
 
 function applyLoginUserAgent(contents, url) {
   try {
@@ -316,6 +345,56 @@ function applyLoginUserAgent(contents, url) {
   } catch {
     /* webContents já fechado */
   }
+}
+
+function isGoogleServiceSession(contents) {
+  try {
+    return contents.session === session.fromPartition('persist:gemini') || contents.session === session.fromPartition('persist:chatgpt');
+  } catch {
+    return false;
+  }
+}
+
+// O Google recusa login dentro de janela embutida. A solução que costuma passar é
+// abrir o login numa janela de verdade, separada, usando a mesma sessão da aba — assim
+// o cookie da conta volta para a aba e ela fica logada.
+let googleLoginWin = null;
+function openGoogleLoginWindow(sourceContents, url) {
+  if (googleLoginWin && !googleLoginWin.isDestroyed()) {
+    googleLoginWin.focus();
+    googleLoginWin.loadURL(url, { userAgent: FIREFOX_UA });
+    return;
+  }
+  googleLoginWin = new BrowserWindow({
+    width: 520,
+    height: 650,
+    title: 'Entrar com o Google',
+    autoHideMenuBar: true,
+    alwaysOnTop: true,
+    webPreferences: { session: sourceContents.session, nodeIntegration: false, contextIsolation: true, sandbox: true },
+  });
+  googleLoginWin.setMenuBarVisibility(false);
+  const wc = googleLoginWin.webContents;
+  try {
+    wc.setUserAgent(FIREFOX_UA);
+  } catch { /* ignora */ }
+  const backToService = () => {
+    let host = '';
+    try {
+      host = new URL(wc.getURL()).hostname;
+    } catch {
+      return;
+    }
+    if (SERVICE_RETURN.test(host)) {
+      if (sourceContents && !sourceContents.isDestroyed()) sourceContents.reload();
+      if (googleLoginWin && !googleLoginWin.isDestroyed()) googleLoginWin.close();
+    }
+  };
+  wc.on('did-navigate', backToService);
+  googleLoginWin.on('closed', () => {
+    googleLoginWin = null;
+  });
+  googleLoginWin.loadURL(url, { userAgent: FIREFOX_UA });
 }
 
 // Webviews: pop-ups de login ficam dentro do app; outros links vão pro navegador
@@ -329,6 +408,13 @@ app.on('web-contents-created', (_e, contents) => {
     });
   }
   if (type !== 'webview') return;
+  // Login do Google dentro da aba (ex.: Gemini): tira para uma janela separada
+  contents.on('will-navigate', (e, url) => {
+    if (GOOGLE_LOGIN.test(url) && isGoogleServiceSession(contents)) {
+      e.preventDefault();
+      openGoogleLoginWindow(contents, url);
+    }
+  });
   contents.setWindowOpenHandler(({ url }) => {
     let host = '';
     try {
@@ -443,12 +529,8 @@ function createTray() {
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img.resize({ width: 16, height: 16 }));
   tray.setToolTip('Lâmina');
   tray.on('click', () => {
-    if (state === 'hidden') {
-      state = 'collapsed';
-      win.setBounds(collapsedBounds());
-      win.showInactive();
-    }
-    toggle();
+    if (state === 'expanded') collapse();
+    else expand();
     buildTrayMenu();
   });
   buildTrayMenu();
@@ -554,7 +636,23 @@ function setupIpc() {
     if ('openAtLogin' in clean) applyLoginItem();
     if ('updateIntervalMin' in clean) updater.schedule();
     if ('glass' in clean && clean.glass !== prev.glass) result.restartNeeded = true;
+    if ('immersive' in clean && clean.immersive !== prev.immersive) applyImmersive(clean.immersive);
+    if ('clipboardHistory' in clean) clip.setEnabled(clean.clipboardHistory);
     return result;
+  });
+
+  // Área de transferência
+  ipcMain.handle('clip:list', () => clip.list());
+  ipcMain.handle('clip:restore', (_e, id) => clip.restore(id));
+  ipcMain.handle('clip:remove', (_e, id) => clip.remove(id));
+  ipcMain.handle('clip:clear', () => clip.clear());
+
+  // Monitor do PC
+  ipcMain.handle('monitor:read', () => sysmon.read());
+
+  // Aviso (usado pelo timer)
+  ipcMain.handle('app:notify', (_e, title, body) => {
+    if (Notification.isSupported()) new Notification({ title: String(title || 'Lâmina'), body: String(body || '') }).show();
   });
 
   // Notas
@@ -675,6 +773,7 @@ app.whenReady().then(() => {
     try {
       const u = new URL(req.url);
       if (u.hostname === 'img') file = imagePath(u.pathname.replace(/^\//, ''));
+      else if (u.hostname === 'clip') file = clip.imgPath(u.pathname.replace(/^\//, ''));
     } catch {
       /* URL inválida */
     }
@@ -682,6 +781,11 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(file).toString());
   });
   cleanupImages();
+
+  clip.start({
+    enabled: settings.get('clipboardHistory'),
+    onChange: (listData) => send('clip:changed', listData),
+  });
 
   setupSessions();
   setupIpc();
