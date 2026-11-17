@@ -1,0 +1,62 @@
+{
+  "name": "lamina",
+  "productName": "Lamina",
+  "version": "1.0.0",
+  "description": "Lâmina: barra lateral de vidro para o Windows com apps, WhatsApp, música, notas, ChatGPT e Gemini.",
+  "main": "src/main/main.js",
+  "author": "Andreunicos",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "devDependencies": {
+    "electron": "^45.3.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.andreunicos.lamina",
+    "productName": "Lamina",
+    "artifactName": "Lamina-Setup-${version}.${ext}",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "shortcutName": "Lâmina",
+      "uninstallDisplayName": "Lâmina",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Andreunicos",
+        "repo": "lamina",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
