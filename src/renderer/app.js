@@ -18,7 +18,7 @@
     chatgpt: { url: 'https://chatgpt.com/', partition: 'persist:chatgpt', title: 'ChatGPT' },
     gemini: { url: 'https://gemini.google.com/app', partition: 'persist:gemini', title: 'Gemini' },
   };
-  const VIEW_ORDER = ['home', 'apps', 'whatsapp', 'music', 'chatgpt', 'gemini', 'notes'];
+  const VIEW_ORDER = ['home', 'apps', 'whatsapp', 'music', 'steam', 'chatgpt', 'gemini', 'notes'];
   const webviews = {};
   const ready = {};
 
@@ -42,7 +42,7 @@
     document.body.classList.toggle('is-expanded', s === 'expanded');
     if (s === 'expanded') {
       requestAnimationFrame(() => {
-        if (window.innerHeight > 300) document.documentElement.style.setProperty('--panel-h', `${window.innerHeight}px`);
+        rememberSize();
         if (currentView === 'home') $('#omni').focus();
       });
     }
@@ -81,6 +81,7 @@
     if (SERVICES[view]) ensureWebview(view);
     if (view === 'apps') loadApps().then(() => $('#appsFilter').focus());
     if (view === 'notes') renderNoteList();
+    if (view === 'steam') loadSteam().then(() => $('#steamFilter').focus());
     if (view === 'home') {
       renderHomeNotes();
       setTimeout(() => $('#omni').focus(), 30);
@@ -101,7 +102,7 @@
   $$('[data-go]').forEach((b) => b.addEventListener('click', () => openView(b.dataset.go)));
 
   document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-7]$/.test(e.key)) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-8]$/.test(e.key)) {
       e.preventDefault();
       openView(VIEW_ORDER[Number(e.key) - 1]);
     } else if (e.key === 'Escape') {
@@ -180,6 +181,7 @@
     wv.addEventListener('dom-ready', () => {
       if (failed) return; // a página de erro do Chromium também dispara dom-ready
       ready[key] = true;
+      try { wv.setZoomFactor(getZoom(key)); } catch { /* ainda anexando */ }
       clearWebMessage(key);
     });
     wv.addEventListener('did-fail-load', (e) => {
@@ -215,6 +217,10 @@
       if (!btn) return;
       const wv = ensureWebview(key);
       if (btn.dataset.act === 'reload') wv.reload();
+      if (btn.dataset.act === 'zoom-in' || btn.dataset.act === 'zoom-out') {
+        const z = Math.round((getZoom(key) + (btn.dataset.act === 'zoom-in' ? 0.1 : -0.1)) * 10) / 10;
+        setZoom(key, Math.max(0.5, Math.min(1.5, z)));
+      }
       if (btn.dataset.act === 'external') {
         let url = SERVICES[key].url;
         try { url = wv.getURL() || url; } catch { /* ainda carregando */ }
@@ -222,6 +228,159 @@
       }
     });
   });
+
+  // ------------------------------------------------------------------ zoom das páginas
+  function getZoom(key) {
+    try {
+      return Number(JSON.parse(localStorage.getItem('zoom') || '{}')[key]) || 1;
+    } catch {
+      return 1;
+    }
+  }
+  function setZoom(key, z) {
+    try {
+      const all = JSON.parse(localStorage.getItem('zoom') || '{}');
+      all[key] = z;
+      localStorage.setItem('zoom', JSON.stringify(all));
+    } catch { /* sem armazenamento */ }
+    if (webviews[key] && ready[key]) webviews[key].setZoomFactor(z);
+    toast(`Tamanho da página: ${Math.round(z * 100)}%`, 1400);
+  }
+
+  // ------------------------------------------------------------------ largura (arrastar a borda)
+  function rememberSize() {
+    if (window.innerHeight > 300) document.documentElement.style.setProperty('--panel-h', `${window.innerHeight}px`);
+    if (window.innerWidth > 300) document.documentElement.style.setProperty('--panel-w', `${window.innerWidth}px`);
+  }
+  window.addEventListener('resize', () => {
+    if (document.body.classList.contains('is-expanded')) rememberSize();
+  });
+  const grip = $('#resizeGrip');
+  let drag = null;
+  let rafId = 0;
+  let pendingW = 0;
+  const sideIsLeft = () => document.body.classList.contains('side-left');
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    drag = { x: e.screenX, w: window.innerWidth };
+    document.body.classList.add('resizing');
+    api.pin(true);
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.screenX - drag.x;
+    pendingW = sideIsLeft() ? drag.w + dx : drag.w - dx;
+    if (!rafId) {
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        api.setWidth(pendingW, false);
+      });
+    }
+  });
+  const endDrag = (e) => {
+    if (!drag) return;
+    try { grip.releasePointerCapture(e.pointerId); } catch { /* já solto */ }
+    drag = null;
+    document.body.classList.remove('resizing');
+    api.setWidth(pendingW || window.innerWidth, true);
+    api.pin($('#pinBtn').getAttribute('aria-pressed') === 'true');
+  };
+  grip.addEventListener('pointerup', endDrag);
+  grip.addEventListener('pointercancel', endDrag);
+  grip.addEventListener('dblclick', () => {
+    pendingW = 440;
+    api.setWidth(440, true);
+  });
+
+  // ------------------------------------------------------------------ Steam
+  let steamData = null;
+  const coverUrls = (id) => [
+    `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${id}/library_600x900.jpg`,
+    `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/library_600x900.jpg`,
+    `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${id}/header.jpg`,
+  ];
+  function gameTile(g) {
+    return `<button type="button" class="game" data-appid="${esc(g.appid)}" title="${esc(g.name)}" aria-label="Jogar ${esc(g.name)}">
+      <span class="g-ph" aria-hidden="true">${esc(g.name)}</span>
+      <img alt="" loading="lazy" data-try="0" src="${coverUrls(g.appid)[0]}" />
+      <span class="g-name">${esc(g.name)}</span></button>`;
+  }
+  // capa: tenta a vertical em dois servidores, depois a horizontal, depois só o nome
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.closest('.game')) return;
+    const tile = img.closest('.game');
+    const next = Number(img.dataset.try) + 1;
+    const urls = coverUrls(tile.dataset.appid);
+    if (next < urls.length) {
+      img.dataset.try = String(next);
+      if (next === urls.length - 1) img.classList.add('wide');
+      img.src = urls[next];
+    } else {
+      img.remove();
+      tile.classList.add('no-art');
+    }
+  }, true);
+
+  async function loadSteam(refresh = false) {
+    if (steamData && !refresh) {
+      renderSteam();
+      return steamData;
+    }
+    $('#steamInfo').textContent = 'Lendo a biblioteca da Steam…';
+    try {
+      steamData = await api.steam.list(refresh);
+    } catch {
+      steamData = { installed: false, games: [] };
+    }
+    renderSteam();
+    renderHomeGames();
+    return steamData;
+  }
+  function renderSteam() {
+    const info = $('#steamInfo');
+    const empty = $('#steamEmpty');
+    const ul = $('#steamGames');
+    if (!steamData || !steamData.installed) {
+      info.textContent = '';
+      ul.innerHTML = '';
+      empty.hidden = false;
+      empty.textContent = 'Não encontrei a Steam neste computador.';
+      return;
+    }
+    const q = norm($('#steamFilter').value.trim());
+    const list = steamData.games.filter((g) => !q || norm(g.name).includes(q));
+    info.textContent = `${steamData.games.length} jogos instalados, os jogados por último primeiro.`;
+    ul.innerHTML = list.map((g) => `<li>${gameTile(g)}</li>`).join('');
+    empty.hidden = list.length > 0;
+    empty.textContent = steamData.games.length ? 'Nenhum jogo com esse nome.' : 'Nenhum jogo instalado na Steam.';
+  }
+  function renderHomeGames() {
+    const games = (steamData && steamData.games ? steamData.games : []).filter((g) => g.lastPlayed > 0).slice(0, 4);
+    $('#homeGamesBlock').hidden = games.length === 0;
+    $('#homeGames').innerHTML = games.map(gameTile).join('');
+  }
+  async function playGame(appid) {
+    const g = steamData && steamData.games.find((x) => x.appid === appid);
+    const ok = await api.steam.launch(appid);
+    if (ok && g) toast(`Abrindo ${g.name}`);
+  }
+  document.addEventListener('click', (e) => {
+    const tile = e.target.closest('.game[data-appid]');
+    if (tile) playGame(tile.dataset.appid);
+    const chip = e.target.closest('[data-steam]');
+    if (chip) api.steam.open(chip.dataset.steam);
+  });
+  $('#steamFilter').addEventListener('input', renderSteam);
+  $('#steamFilter').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const first = $('#steamGames .game');
+      if (first) playGame(first.dataset.appid);
+    }
+  });
+  $('#steamRefresh').addEventListener('click', () => loadSteam(true));
 
   // ------------------------------------------------------------------ WhatsApp
   const waMessages = []; // só em memória: nada de conversa salvo em disco
@@ -541,6 +700,11 @@
       note: { kind: 'note', label: 'Salvar como nota', sub: body, icon: '#i-note' },
     };
     const appsFound = cmd ? [] : matchApps(text, 5).map((a) => ({ kind: 'app', app: a, label: a.name, sub: 'Abrir app' }));
+    const qn = norm(text);
+    const gamesFound = cmd || !steamData ? [] : steamData.games
+      .filter((g) => norm(g.name).includes(qn))
+      .slice(0, 3)
+      .map((g) => ({ kind: 'game', game: g, label: g.name, sub: 'Jogar na Steam', icon: '#i-pad' }));
 
     let order;
     if (cmd === 'gpt' || cmd === 'chat' || cmd === 'chatgpt') order = ['gpt', 'gemini', 'music', 'note'];
@@ -549,7 +713,7 @@
     else if (cmd === 'nota' || cmd === 'n') order = ['note', 'gpt', 'gemini', 'music'];
     else order = ['gpt', 'gemini', 'music', 'note'];
 
-    return [...appsFound, ...order.map((k) => ({ ...actions[k], text: body }))];
+    return [...gamesFound, ...appsFound, ...order.map((k) => ({ ...actions[k], text: body }))];
   }
 
   function renderOmni() {
@@ -575,6 +739,7 @@
     if (!it) return;
     clearOmni();
     if (it.kind === 'app') return launchApp(it.app.id);
+    if (it.kind === 'game') return playGame(it.game.appid);
     if (it.kind === 'gpt') return askChatGPT(it.text);
     if (it.kind === 'gemini') return askGemini(it.text);
     if (it.kind === 'music') {
@@ -810,6 +975,9 @@
     openView('home');
     renderWaFeed();
     if (settings.preloadWhatsApp) ensureWebview('whatsapp');
-    if (info.platform === 'win32') loadApps();
+    if (info.platform === 'win32') {
+      loadApps();
+      loadSteam();
+    }
   })();
 })();

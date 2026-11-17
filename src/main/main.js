@@ -17,6 +17,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { createStore } = require('./store');
 const apps = require('./apps');
+const steam = require('./steam');
 const updater = require('./updater');
 
 const APP_ID = 'com.andreunicos.lamina';
@@ -59,6 +60,7 @@ const SETTINGS_DEFAULTS = {
   updateIntervalMin: 30,
   autoInstall: true,
   preloadWhatsApp: true,
+  panelWidth: 440,
   reducedMotion: false,
   lastVersion: null,
   firstRunDone: false,
@@ -73,7 +75,9 @@ let pinned = false;
 let isQuitting = false;
 let animTimer = null;
 
-const PANEL_WIDTH = 400;
+const PANEL_WIDTH = 440;
+const MIN_WIDTH = 340;
+const MAX_WIDTH = 1100;
 const MARGIN = 12;
 const HANDLE = { w: 12, h: 150 };
 
@@ -99,11 +103,17 @@ function glassMode() {
 function targetDisplay() {
   return screen.getPrimaryDisplay();
 }
-function expandedBounds() {
+function clampWidth(w) {
   const wa = targetDisplay().workArea;
+  const max = Math.min(MAX_WIDTH, wa.width - MARGIN * 2 - 40);
+  return Math.round(Math.max(MIN_WIDTH, Math.min(max, Number(w) || PANEL_WIDTH)));
+}
+function expandedBounds(width) {
+  const wa = targetDisplay().workArea;
+  const w = clampWidth(width || settings.get('panelWidth'));
   const h = wa.height - MARGIN * 2;
-  const x = settings.get('side') === 'left' ? wa.x + MARGIN : wa.x + wa.width - PANEL_WIDTH - MARGIN;
-  return { x, y: wa.y + MARGIN, width: PANEL_WIDTH, height: h };
+  const x = settings.get('side') === 'left' ? wa.x + MARGIN : wa.x + wa.width - w - MARGIN;
+  return { x, y: wa.y + MARGIN, width: w, height: h };
 }
 function collapsedBounds() {
   const wa = targetDisplay().workArea;
@@ -278,9 +288,32 @@ function createWindow() {
   });
 }
 
+// Login do Google: o Google recusa navegadores "embutidos" baseados em Chromium
+// ("Esse navegador ou app pode não ser seguro"). Nas páginas de login do Google o app
+// se identifica como Firefox, que o Google aceita; fora delas volta a ser Chrome.
+const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
+const GOOGLE_LOGIN = /^https:\/\/accounts\.google\.com\//i;
+
+function applyLoginUserAgent(contents, url) {
+  try {
+    const want = GOOGLE_LOGIN.test(url) ? FIREFOX_UA : CHROME_UA;
+    if (contents.getUserAgent() !== want) contents.setUserAgent(want);
+  } catch {
+    /* webContents já fechado */
+  }
+}
+
 // Webviews: pop-ups de login ficam dentro do app; outros links vão pro navegador
 app.on('web-contents-created', (_e, contents) => {
-  if (contents.getType() !== 'webview') return;
+  const type = contents.getType();
+  if (type === 'webview' || type === 'window') {
+    contents.on('did-start-navigation', (e, legacyUrl, _inPlace, legacyMain) => {
+      const url = (e && e.url) || legacyUrl || '';
+      const isMain = e && typeof e.isMainFrame === 'boolean' ? e.isMainFrame : legacyMain;
+      if (isMain) applyLoginUserAgent(contents, url);
+    });
+  }
+  if (type !== 'webview') return;
   contents.setWindowOpenHandler(({ url }) => {
     let host = '';
     try {
@@ -312,6 +345,26 @@ function setupSessions() {
     ses.setUserAgent(CHROME_UA);
     ses.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED_PERMISSIONS.has(permission)));
     ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
+    // Cabeçalhos das páginas de login do Google: Firefox e sem as "client hints" do Chromium
+    ses.webRequest.onBeforeSendHeaders({ urls: ['https://accounts.google.com/*'] }, (details, cb) => {
+      const headers = details.requestHeaders;
+      for (const k of Object.keys(headers)) {
+        if (/^user-agent$/i.test(k) || /^sec-ch-ua/i.test(k)) delete headers[k];
+      }
+      headers['User-Agent'] = FIREFOX_UA;
+      cb({ requestHeaders: headers });
+    });
+    // Script que tira a "assinatura" do Chromium do navegador nas páginas de login
+    const loginPreload = path.join(__dirname, '..', 'preload', 'login-preload.js');
+    try {
+      if (typeof ses.registerPreloadScript === 'function') {
+        ses.registerPreloadScript({ type: 'frame', id: 'lamina-login', filePath: loginPreload });
+      } else {
+        ses.setPreloads([loginPreload]);
+      }
+    } catch (err) {
+      console.error('[preload login]', err);
+    }
   }
 }
 
@@ -427,6 +480,26 @@ function setupIpc() {
     pinned = !!value;
   });
   ipcMain.on('win:hide', () => hideAll());
+  // Arrastar a borda interna muda a largura (a borda grudada na tela fica parada)
+  ipcMain.on('win:set-width', (_e, width, done) => {
+    if (!win || state !== 'expanded') return;
+    const b = expandedBounds(clampWidth(width));
+    win.setBounds(b);
+    if (done) settings.set('panelWidth', b.width);
+  });
+
+  // Steam
+  ipcMain.handle('steam:list', (_e, refresh) => steam.list(!!refresh));
+  ipcMain.handle('steam:launch', (_e, appid) => {
+    const ok = steam.launch(appid);
+    if (ok) collapse();
+    return ok;
+  });
+  ipcMain.handle('steam:open', (_e, page) => {
+    const ok = steam.open(page);
+    if (ok) collapse();
+    return ok;
+  });
 
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),

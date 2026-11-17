@@ -8,6 +8,7 @@ Uma barra lateral de vidro fosco para o Windows. Fica escondida como uma alça f
 - **Apps:** todos os apps do Menu Iniciar, inclusive os da Microsoft Store. Digite e aperte Enter.
 - **WhatsApp:** o WhatsApp Web dentro da barra. As mensagens novas aparecem no Início e a alça fica âmbar quando há não lidas.
 - **Música:** YouTube Music. Digite o nome e Enter já toca o primeiro resultado. O Início ganha controles de tocar, pausar e pular.
+- **Steam:** os jogos instalados com as capas, os jogados por último primeiro. Clique e o jogo abre. Atalhos para Biblioteca, Loja, Amigos e Downloads. Os últimos jogados também aparecem no Início, e a busca do Início acha jogos pelo nome.
 - **ChatGPT e Gemini:** os sites oficiais, usando a sua conta gratuita. Pela busca do Início, `gpt sua pergunta` ou `gem sua pergunta` já envia a pergunta.
 - **Notas:** bloco de notas com salvamento automático. A primeira linha vira o título.
 - **Ajustes:** lado da tela, atalho, abrir ao passar o mouse, recolher ao clicar fora, iniciar com o Windows, tipo de vidro e atualizações.
@@ -22,7 +23,11 @@ Uma barra lateral de vidro fosco para o Windows. Fica escondida como uma alça f
 | `tocar ...` ou `m ...` | toca no YouTube Music |
 | `nota ...` | salva uma nota |
 
-Atalhos dentro da barra: `Ctrl+1` a `Ctrl+7` trocam de seção, `Ctrl+N` cria nota, `Esc` recolhe.
+Atalhos dentro da barra: `Ctrl+1` a `Ctrl+8` trocam de seção, `Ctrl+N` cria nota, `Esc` recolhe.
+
+**Largura:** arraste a borda de dentro da barra (a que não encosta na tela) para deixar mais larga ou mais estreita. Duplo clique nela volta ao tamanho padrão. A largura fica salva.
+
+**Tamanho das páginas:** nas abas WhatsApp, Música, ChatGPT e Gemini, as lupas com − e + diminuem ou aumentam a página (fica salvo por aba).
 
 ## Instalar
 
@@ -72,7 +77,7 @@ src/renderer/   interface (HTML, CSS, JS, fontes)
 
 ## Limitações conhecidas
 
-- O login com Google dentro de apps às vezes é bloqueado pelo Google ("navegador não seguro"). Se acontecer, entre com e-mail e senha no próprio site, ou use o botão de abrir no navegador.
+- O Google bloqueia login dentro de apps feitos com Chromium ("Esse navegador ou app pode não ser seguro"). A Lâmina se identifica como Firefox só nas páginas de login do Google, o que normalmente resolve. Se o Google mudar a regra e voltar a bloquear, no ChatGPT dá para entrar com e-mail e senha.
 - Tocar o primeiro resultado e enviar a pergunta ao Gemini automaticamente dependem do layout atual desses sites. Se eles mudarem o layout, pode ser preciso ajustar os seletores em `src/renderer/app.js`.
 
 ## Créditos

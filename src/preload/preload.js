@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld('lamina', {
   hover: () => ipcRenderer.send('win:hover'),
   pin: (value) => ipcRenderer.send('win:pin', value),
   hide: () => ipcRenderer.send('win:hide'),
+  setWidth: (width, done) => ipcRenderer.send('win:set-width', width, !!done),
+
+  steam: {
+    list: (refresh) => ipcRenderer.invoke('steam:list', refresh),
+    launch: (appid) => ipcRenderer.invoke('steam:launch', appid),
+    open: (page) => ipcRenderer.invoke('steam:open', page),
+  },
 
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
 
