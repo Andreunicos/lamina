@@ -21,9 +21,9 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -40,7 +40,23 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Versão: $VERSION"
 
-      - name: Gerar instalador e publicar release
-        run: npx electron-builder --win --publish always
+      - name: Gerar instalador
+        run: npx electron-builder --win --publish never
+
+      # Publica com o gh numa chamada só (o publish do electron-builder envia os
+      # arquivos em paralelo e às vezes cria a release duas vezes).
+      - name: Publicar release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -la dist
+          git log -1 --pretty=%B > notes.txt
+          gh release create "v$VERSION" \
+            "dist/Lamina-Setup-$VERSION.exe" \
+            "dist/Lamina-Setup-$VERSION.exe.blockmap" \
+            dist/latest.yml \
+            --title "Lâmina $VERSION" \
+            --notes-file notes.txt \
+            --target "$GITHUB_SHA" \
+            --latest
