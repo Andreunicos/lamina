@@ -26,6 +26,7 @@ const apps = require('./apps');
 const steam = require('./steam');
 const clip = require('./clip');
 const sysmon = require('./sysmon');
+const obsidian = require('./obsidian');
 const updater = require('./updater');
 
 const APP_ID = 'com.andreunicos.lamina';
@@ -55,7 +56,7 @@ const CHROME_MAJOR = String(process.versions.chrome || '140').split('.')[0];
 const CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
 app.userAgentFallback = CHROME_UA;
 
-const PARTITIONS = ['persist:whatsapp', 'persist:music', 'persist:chatgpt', 'persist:gemini', 'persist:steam'];
+const PARTITIONS = ['persist:whatsapp', 'persist:music', 'persist:chatgpt', 'persist:gemini', 'persist:steam', 'persist:discord'];
 const ALLOWED_PERMISSIONS = new Set([
   'notifications',
   'media',
@@ -80,6 +81,9 @@ const SETTINGS_DEFAULTS = {
   panelWidth: 440,
   immersive: false,
   clipboardHistory: true,
+  memorySaver: true,
+  bgNotifications: true,
+  lastVault: null,
   reducedMotion: false,
   lastVersion: null,
   firstRunDone: false,
@@ -336,7 +340,7 @@ function createWindow() {
 // se identifica como Firefox, que o Google aceita; fora delas volta a ser Chrome.
 const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
 const GOOGLE_LOGIN = /^https:\/\/accounts\.google\.com\//i;
-const SERVICE_RETURN = /(gemini\.google\.com|chatgpt\.com|chat\.openai\.com|steamcommunity\.com)$/i;
+const SERVICE_RETURN = /(gemini\.google\.com|chatgpt\.com|chat\.openai\.com|steamcommunity\.com|youtube\.com|music\.youtube\.com)$/i;
 
 function applyLoginUserAgent(contents, url) {
   try {
@@ -349,7 +353,8 @@ function applyLoginUserAgent(contents, url) {
 
 function isGoogleServiceSession(contents) {
   try {
-    return contents.session === session.fromPartition('persist:gemini') || contents.session === session.fromPartition('persist:chatgpt');
+    const s = contents.session;
+    return s === session.fromPartition('persist:gemini') || s === session.fromPartition('persist:chatgpt') || s === session.fromPartition('persist:music');
   } catch {
     return false;
   }
@@ -649,6 +654,14 @@ function setupIpc() {
 
   // Monitor do PC
   ipcMain.handle('monitor:read', () => sysmon.read());
+
+  // Obsidian
+  ipcMain.handle('obsidian:vaults', () => obsidian.vaults());
+  ipcMain.handle('obsidian:save', (_e, note) => {
+    const res = obsidian.save(note || {});
+    if (res.ok && note && note.vaultPath) settings.set('lastVault', note.vaultPath);
+    return res;
+  });
 
   // Aviso (usado pelo timer)
   ipcMain.handle('app:notify', (_e, title, body) => {

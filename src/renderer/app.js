@@ -13,12 +13,15 @@
   let currentView = 'home';
 
   const SERVICES = {
-    whatsapp: { url: 'https://web.whatsapp.com/', partition: 'persist:whatsapp', title: 'WhatsApp', preload: true },
+    whatsapp: { url: 'https://web.whatsapp.com/', partition: 'persist:whatsapp', title: 'WhatsApp', preload: true, feed: 'wa' },
+    discord: { url: 'https://discord.com/channels/@me', partition: 'persist:discord', title: 'Discord', preload: true, feed: 'dc' },
     music: { url: 'https://music.youtube.com/', partition: 'persist:music', title: 'YouTube Music' },
     chatgpt: { url: 'https://chatgpt.com/', partition: 'persist:chatgpt', title: 'ChatGPT' },
     gemini: { url: 'https://gemini.google.com/app', partition: 'persist:gemini', title: 'Gemini' },
     steamchat: { url: 'https://steamcommunity.com/chat', partition: 'persist:steam', title: 'chat da Steam', frame: '#steamFriendsPane .web-frame' },
   };
+  // serviços que ficam ligados em segundo plano para alimentar o Início
+  const BG_SERVICES = ['whatsapp', 'discord'];
   const VIEW_ORDER = ['home', 'apps', 'whatsapp', 'music', 'steam', 'chatgpt', 'gemini', 'notes', 'clipboard', 'timer'];
   const webviews = {};
   const ready = {};
@@ -48,6 +51,8 @@
       });
     }
     updateMonitor();
+    // ao recolher, deixa a animação terminar e então dorme as webviews
+    reconcileWebviews(s === 'expanded' ? 0 : 1600);
   }
   api.onState(setState);
 
@@ -81,14 +86,16 @@
       b.setAttribute('aria-selected', String(sel));
       b.tabIndex = sel ? 0 : -1;
     });
-    if (SERVICES[view]) ensureWebview(view);
+    reconcileWebviews();
     if (view === 'apps') loadApps().then(() => $('#appsFilter').focus());
-    if (view === 'notes') renderNoteList();
+    if (view === 'notes') {
+      renderNoteList();
+      loadVaults();
+    }
     if (view === 'clipboard') renderClip();
     updateMonitor();
     if (view === 'steam') loadSteam().then(() => $('#steamFilter').focus());
     if (view === 'home') {
-      renderHomeNotes();
       if (steamData) renderHomeGames();
       updateMonitor();
       setTimeout(() => $('#omni').focus(), 30);
@@ -202,13 +209,47 @@
       showWebMessage(key, `O ${cfg.title} parou de responder`, 'Recarregue para continuar de onde parou.');
     });
 
-    if (key === 'whatsapp') {
+    if (cfg.feed) {
       wv.addEventListener('ipc-message', (e) => {
-        if (e.channel === 'notification') addWaMessage(e.args[0]);
+        if (e.channel === 'notification') addFeedMessage(cfg.feed, e.args[0]);
       });
-      wv.addEventListener('page-title-updated', (e) => setUnread(e.title));
+      wv.addEventListener('page-title-updated', (e) => setUnread(key, cfg.feed, e.title));
     }
     return wv;
+  }
+
+  // Memória: descarrega a webview (fecha o processo). A conta continua logada
+  // porque a sessão fica salva; só o estado da página na tela se perde.
+  function unloadWebview(key) {
+    const wv = webviews[key];
+    if (!wv) return;
+    try {
+      wv.remove();
+    } catch { /* já removida */ }
+    delete webviews[key];
+    ready[key] = false;
+  }
+  function activeService() {
+    return SERVICES[currentView] ? currentView : currentView === 'steam' ? null : null;
+  }
+  function keepAliveSet() {
+    const expanded = document.body.classList.contains('is-expanded');
+    const keep = new Set();
+    if (!expanded && settings && settings.memorySaver) return keep; // recolhido: dorme tudo
+    const a = SERVICES[currentView] ? currentView : null;
+    if (a) keep.add(a);
+    if (currentView === 'steam' && $('#steamFriendsPane') && !$('#steamFriendsPane').hidden) keep.add('steamchat');
+    if (!settings || settings.bgNotifications !== false) for (const k of BG_SERVICES) keep.add(k);
+    return keep;
+  }
+  let reconcileTimer = null;
+  function reconcileWebviews(delay = 0) {
+    clearTimeout(reconcileTimer);
+    reconcileTimer = setTimeout(() => {
+      const keep = keepAliveSet();
+      for (const k of Object.keys(webviews)) if (!keep.has(k)) unloadWebview(k);
+      for (const k of keep) ensureWebview(k);
+    }, delay);
   }
 
   async function whenReady(key, timeout = 20000) {
@@ -401,23 +442,29 @@
   $('#steamTabGames').addEventListener('click', () => steamTab('games'));
   $('#steamTabFriends').addEventListener('click', () => steamTab('friends'));
 
-  // ------------------------------------------------------------------ WhatsApp
-  const waMessages = []; // só em memória: nada de conversa salvo em disco
-  function setUnread(title) {
+  // ------------------------------------------------------------------ feeds (WhatsApp / Discord)
+  // só em memória: nenhuma conversa é salva em disco
+  const feeds = { wa: { msgs: [], unread: 0, view: 'whatsapp' }, dc: { msgs: [], unread: 0, view: 'discord' } };
+  function setUnread(key, feed, title) {
     const m = /\((\d+)\)/.exec(title || '');
     const n = m ? Number(m[1]) : 0;
-    const badge = $('.rail-btn[data-view="whatsapp"] .count');
-    badge.hidden = n === 0;
-    badge.textContent = n > 99 ? '99+' : String(n);
-    $('.rail-btn[data-view="whatsapp"]').setAttribute('aria-label', n ? `WhatsApp, ${n} não lidas` : 'WhatsApp');
-    handle.classList.toggle('unread', n > 0);
-    handle.setAttribute('aria-label', n ? `Abrir a Lâmina: ${n} mensagens não lidas` : 'Abrir a Lâmina');
+    feeds[feed].unread = n;
+    const name = SERVICES[key].title;
+    const badge = $(`.rail-btn[data-view="${key}"] .count`);
+    if (badge) {
+      badge.hidden = n === 0;
+      badge.textContent = n > 99 ? '99+' : String(n);
+    }
+    $(`.rail-btn[data-view="${key}"]`).setAttribute('aria-label', n ? `${name}, ${n} não lidas` : name);
+    const total = feeds.wa.unread + feeds.dc.unread;
+    handle.classList.toggle('unread', total > 0);
+    handle.setAttribute('aria-label', total ? `Abrir a Lâmina: ${total} mensagens não lidas` : 'Abrir a Lâmina');
   }
-  function addWaMessage(msg) {
+  function addFeedMessage(feed, msg) {
     if (!msg || !msg.title) return;
-    waMessages.unshift(msg);
-    waMessages.length = Math.min(waMessages.length, 20);
-    renderWaFeed();
+    feeds[feed].msgs.unshift(msg);
+    feeds[feed].msgs.length = Math.min(feeds[feed].msgs.length, 20);
+    renderFeed(feed);
   }
   function timeAgo(ts) {
     const d = Math.round((Date.now() - ts) / 60000);
@@ -425,20 +472,26 @@
     if (d < 60) return `${d} min`;
     return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   }
-  function renderWaFeed() {
-    const ul = $('#waFeed');
-    ul.innerHTML = waMessages
+  function renderFeed(feed) {
+    const f = feeds[feed];
+    const ul = $(`#${feed}Feed`);
+    if (!ul) return;
+    ul.innerHTML = f.msgs
       .slice(0, 5)
       .map(
-        (m) => `<li><button type="button" data-go-wa>
+        (m) => `<li><button type="button" data-go-feed="${f.view}">
           <div class="who"><span>${esc(m.title)}</span><time>${timeAgo(m.at)}</time></div>
           <div class="msg">${esc(m.body)}</div></button></li>`
       )
       .join('');
-    $('#waEmpty').hidden = waMessages.length > 0;
-    $$('[data-go-wa]', ul).forEach((b) => b.addEventListener('click', () => openView('whatsapp')));
+    $(`#${feed}Empty`).hidden = f.msgs.length > 0;
+    $$('[data-go-feed]', ul).forEach((b) => b.addEventListener('click', () => openView(b.dataset.goFeed)));
   }
-  setInterval(renderWaFeed, 60000);
+  function renderFeeds() {
+    renderFeed('wa');
+    renderFeed('dc');
+  }
+  setInterval(renderFeeds, 60000);
 
   // ------------------------------------------------------------------ música
   const MUSIC_STATE_JS = `(() => {
@@ -861,14 +914,7 @@
       .join('');
     $('#notesEmpty').hidden = notes.length > 0;
   }
-  async function renderHomeNotes() {
-    await refreshNotes();
-    $('#homeNotes').innerHTML = notes
-      .slice(0, 3)
-      .map((n) => `<li><button type="button" data-id="${esc(n.id)}"><div class="row"><div><div class="t">${esc(n.title || 'Sem título')}</div><div class="d">${fmtDate(n.updated)}</div></div>${thumb(n)}</div></button></li>`)
-      .join('');
-    $('#homeNotesEmpty').hidden = notes.length > 0;
-  }
+  function renderHomeNotes() {} // o bloco de notas saiu da tela inicial
 
   function openEditor(note) {
     editing = note ? { ...note } : { id: null, body: '', html: '' };
@@ -1091,10 +1137,6 @@
     renderHomeNotes();
   });
   $('#newNoteBtn').addEventListener('click', newNote);
-  $('#homeNewNote').addEventListener('click', () => {
-    openView('notes');
-    newNote();
-  });
   const openNoteById = (id) => {
     const n = notes.find((x) => x.id === id);
     if (n) openEditor(n);
@@ -1103,13 +1145,45 @@
     const b = e.target.closest('button[data-id]');
     if (b) openNoteById(b.dataset.id);
   });
-  $('#homeNotes').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-id]');
-    if (!b) return;
-    openView('notes');
-    openNoteById(b.dataset.id);
-  });
   window.addEventListener('beforeunload', () => flushNote());
+
+  // ------------------------------------------------------------------ nota rápida (Obsidian)
+  let vaults = [];
+  async function loadVaults() {
+    try {
+      vaults = (await api.obsidian.vaults()) || [];
+    } catch {
+      vaults = [];
+    }
+    const box = $('#quickNote');
+    const sel = $('#qnVault');
+    if (!vaults.length) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    const last = settings && settings.lastVault;
+    sel.innerHTML = vaults.map((v) => `<option value="${esc(v.path)}"${v.path === last ? ' selected' : ''}>${esc(v.name)}</option>`).join('');
+  }
+  $('#qnSave').addEventListener('click', async () => {
+    const body = $('#qnBody').value.trim();
+    if (!body) return;
+    const vaultPath = $('#qnVault').value;
+    const res = await api.obsidian.save({ vaultPath, body });
+    if (res && res.ok) {
+      $('#qnBody').value = '';
+      settings.lastVault = vaultPath;
+      toast(`Salva em ${res.vault}: ${res.file}`);
+    } else {
+      toast((res && res.error) || 'Não consegui salvar no cofre.', 3500);
+    }
+  });
+  $('#qnBody').addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      $('#qnSave').click();
+    }
+  });
 
   // Colar uma imagem na busca do Início já guarda ela numa nota nova
   omni.addEventListener('paste', async (e) => {
@@ -1387,6 +1461,8 @@
     applySettingsToForm();
     if (!res.ok && res.error) toast(res.error, 4000);
     if (res.restartNeeded) $('#restartBtn').hidden = false;
+    if ('bgNotifications' in patch || 'memorySaver' in patch) reconcileWebviews();
+    if ('clipboardHistory' in patch && currentView === 'clipboard') renderClip();
     return res;
   }
   $$('input[name="side"]').forEach((r) => r.addEventListener('change', () => r.checked && save({ side: r.value })));
@@ -1464,9 +1540,10 @@
     renderUpdate(info.updateStatus);
     paintTimer();
     openView('home');
-    renderWaFeed();
+    renderFeeds();
     loadClip();
-    if (settings.preloadWhatsApp) ensureWebview('whatsapp');
+    loadVaults();
+    reconcileWebviews(); // liga WhatsApp/Discord em segundo plano se ligado
     if (info.platform === 'win32') {
       loadApps();
       loadSteam();
