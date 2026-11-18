@@ -40,19 +40,50 @@
     toastTimer = setTimeout(() => t.classList.remove('show'), ms);
   }
 
+  // ------------------------------------------------------------------ timers ociosos
+  // CPU: relógio, feeds e "tocando agora" só fazem sentido com a barra aberta.
+  // Recolhida, pausamos esses intervalos (fica só o main + o timer/Pomodoro, que
+  // precisa continuar contando). Reduz o consumo de CPU com o app invisível a ~0.
+  const idleTimers = [];
+  function everyWhileOpen(fn, ms) {
+    idleTimers.push({ fn, ms, id: null });
+  }
+  function startIdleTimers() {
+    for (const t of idleTimers) {
+      if (t.id) continue;
+      t.fn();
+      t.id = setInterval(t.fn, t.ms);
+    }
+  }
+  function stopIdleTimers() {
+    for (const t of idleTimers) {
+      if (!t.id) continue;
+      clearInterval(t.id);
+      t.id = null;
+    }
+  }
+
   // ------------------------------------------------------------------ estado da janela
+  let gcTimer = null;
   function setState(s) {
-    document.body.classList.toggle('is-collapsed', s !== 'expanded');
-    document.body.classList.toggle('is-expanded', s === 'expanded');
-    if (s === 'expanded') {
+    const expanded = s === 'expanded';
+    document.body.classList.toggle('is-collapsed', !expanded);
+    document.body.classList.toggle('is-expanded', expanded);
+    if (expanded) {
+      startIdleTimers();
       requestAnimationFrame(() => {
         rememberSize();
         if (currentView === 'home') $('#omni').focus();
       });
+    } else {
+      stopIdleTimers();
     }
     updateMonitor();
     // ao recolher, deixa a animação terminar e então dorme as webviews
-    reconcileWebviews(s === 'expanded' ? 0 : 1600);
+    reconcileWebviews(expanded ? 0 : 1600);
+    // Depois que as webviews saem, compacta o heap ocioso do renderer da barra.
+    clearTimeout(gcTimer);
+    if (!expanded && window.gc) gcTimer = setTimeout(() => window.gc && window.gc(), 2000);
   }
   api.onState(setState);
 
@@ -141,7 +172,7 @@
     $('#date').textContent = now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
   }
   tick();
-  setInterval(tick, 5000);
+  everyWhileOpen(tick, 5000);
 
   // ------------------------------------------------------------------ webviews
   function frameOf(key) {
@@ -491,7 +522,7 @@
     renderFeed('wa');
     renderFeed('dc');
   }
-  setInterval(renderFeeds, 60000);
+  everyWhileOpen(renderFeeds, 60000);
 
   // ------------------------------------------------------------------ música
   const MUSIC_STATE_JS = `(() => {
@@ -576,7 +607,7 @@
       box.hidden = true;
     }
   }
-  setInterval(pollMusic, 2500);
+  everyWhileOpen(pollMusic, 2500);
 
   // ------------------------------------------------------------------ ChatGPT / Gemini
   function askChatGPT(q) {

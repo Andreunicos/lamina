@@ -32,6 +32,12 @@ const updater = require('./updater');
 const APP_ID = 'com.andreunicos.lamina';
 const ASSETS = path.join(__dirname, '..', 'assets');
 
+// Memória: expõe o coletor de lixo do V8 (window.gc) nos processos renderer.
+// O renderer da barra chama isso ao recolher para compactar o heap ocioso.
+// (O flag só alcança os renderers, que nascem depois daqui; não cria dependência
+// nova nem muda o visual.)
+app.commandLine.appendSwitch('js-flags', '--expose-gc');
+
 // ---------------------------------------------------------------------------
 // Instância única
 // ---------------------------------------------------------------------------
@@ -152,6 +158,28 @@ function send(channel, payload) {
 }
 
 // ---------------------------------------------------------------------------
+// Memória ociosa: ao recolher, o renderer já descarrega as webviews (fecha os
+// processos Chromium, que são o grosso da RAM). Aqui liberamos o que SOBREVIVE a
+// isso: os caches HTTP das sessões, que ficam no processo de rede compartilhado.
+// Só limpa cache — cookies e login continuam salvos, então nada desloga; só o
+// próximo carregamento vem da rede em vez do cache. (O heap do renderer da barra
+// é compactado pelo próprio renderer com window.gc ao recolher.)
+let freeIdleTimer = null;
+function freeIdleMemory() {
+  clearTimeout(freeIdleTimer);
+  // Espera o renderer terminar de descarregar as webviews antes de limpar.
+  freeIdleTimer = setTimeout(() => {
+    if (state === 'expanded') return; // reabriu nesse meio tempo
+    try {
+      session.defaultSession.clearCache();
+      for (const p of PARTITIONS) session.fromPartition(p).clearCache();
+    } catch {
+      /* sessão ocupada */
+    }
+  }, 2200);
+}
+
+// ---------------------------------------------------------------------------
 // Animação de abrir/recolher (move a janela + opacidade)
 // ---------------------------------------------------------------------------
 function animate(target, fromX, fromOpacity, toOpacity, duration, done) {
@@ -213,6 +241,7 @@ function collapse() {
         win.showInactive();
       }
       updater.notifyIdle();
+      freeIdleMemory();
     }, 40);
   });
 }
@@ -238,6 +267,7 @@ function hideAll() {
   send('state', 'collapsed');
   win.hide();
   updater.notifyIdle();
+  freeIdleMemory();
   buildTrayMenu();
 }
 
