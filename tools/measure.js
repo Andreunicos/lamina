@@ -126,6 +126,21 @@ app.whenReady().then(async () => {
   await sleep(2500); // estabiliza heap/DOM
   const expanded = await measure(`expandido(${N}_abas)`, process.pid);
 
+  // ---- SEGUNDO PLANO (item 2): esconde as abas com display:none -----------
+  // Marca os convidados como ocultos (document.hidden) para acionar o throttling e
+  // o reclaim nativo do Chromium (~10 s). As webviews continuam VIVAS, só dormindo.
+  await win.webContents.executeJavaScript("window._wvs.forEach((w) => (w.style.display = 'none')); true;");
+  await sleep(12000);
+  const background = await measure('segundo_plano(display_none)', process.pid);
+  // volta a exibir para não falsear o cenário seguinte
+  await win.webContents.executeJavaScript("window._wvs.forEach((w) => (w.style.display = 'block')); true;");
+  await sleep(1500);
+
+  // ---- DESCARTE POR INATIVIDADE (item 1): mantém 1, descarta o resto ------
+  await win.webContents.executeJavaScript('window._wvs.slice(1).forEach((w) => w.remove()); window._wvs = window._wvs.slice(0, 1); true;');
+  await sleep(3500);
+  const idleUnload = await measure(`descarte_inatividade(mantem_1_de_${N})`, process.pid);
+
   // ---- RECOLHIDO (comportamento ANTIGO): só remove as webviews ------------
   await win.webContents.executeJavaScript('window._wvs.forEach((w) => w.remove()); window._wvs = []; true;');
   await sleep(3500); // deixa os processos renderer morrerem
@@ -145,9 +160,13 @@ app.whenReady().then(async () => {
     N,
     base_mb: base,
     expanded_mb: expanded,
+    background_display_none_mb: background,
+    idle_unload_keep1_mb: idleUnload,
     collapsed_old_mb: collapsedOld,
     collapsed_new_mb: collapsedNew,
     per_webview_mb: Math.round((expanded - base) / N),
+    drop_expanded_to_background_pct: Math.round((1 - background / expanded) * 100),
+    drop_expanded_to_idle_unload_pct: Math.round((1 - idleUnload / expanded) * 100),
     drop_expanded_to_collapsed_new_pct: Math.round((1 - collapsedNew / expanded) * 100),
     extra_drop_from_clearcache_gc_mb: collapsedOld - collapsedNew,
   }));

@@ -15,6 +15,7 @@ let items = [];
 let timer = null;
 let enabled = true;
 let lastSig = '';
+let lastImgPre = ''; // "impressão digital" barata da última imagem vista na área
 let onChange = null;
 
 const dir = () => path.join(app.getPath('userData'), 'clip-images');
@@ -53,8 +54,19 @@ function poll() {
     if (formats.some((f) => f.startsWith('image/'))) {
       const img = clipboard.readImage();
       if (!img.isEmpty()) {
+        // Pré-filtro barato (1 Hz): em vez de reencodar o PNG inteiro toda vez, faz o
+        // hash de uma miniatura 16×16 (1 KB). Se a mesma imagem só está parada na área
+        // de transferência, o hash bate e saímos sem encodar o PNG nem re-hashear tudo.
+        let pre = '';
+        try {
+          pre = sha(img.resize({ width: 16, height: 16 }).toBitmap());
+        } catch {
+          /* resize indisponível: cai para o caminho completo */
+        }
+        if (pre && pre === lastImgPre) return; // imagem idêntica ainda na área: nada a fazer
         const png = img.toPNG();
         const sig = 'i:' + sha(png);
+        lastImgPre = pre;
         if (sig !== lastSig) {
           fs.mkdirSync(dir(), { recursive: true });
           const name = `${crypto.randomBytes(8).toString('hex')}.png`;
@@ -67,6 +79,7 @@ function poll() {
         return;
       }
     }
+    lastImgPre = ''; // saiu uma imagem da área; a próxima será reavaliada do zero
     const text = clipboard.readText();
     if (text && text.trim()) {
       const sig = 't:' + sha(text);

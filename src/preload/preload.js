@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld('lamina', {
   monitor: {
     read: () => ipcRenderer.invoke('monitor:read'),
   },
+  memory: {
+    free: () => ipcRenderer.invoke('mem:free'),
+  },
   obsidian: {
     vaults: () => ipcRenderer.invoke('obsidian:vaults'),
     save: (note) => ipcRenderer.invoke('obsidian:save', note),

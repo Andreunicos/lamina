@@ -28,6 +28,7 @@ const clip = require('./clip');
 const sysmon = require('./sysmon');
 const obsidian = require('./obsidian');
 const updater = require('./updater');
+const memory = require('./memory');
 
 const APP_ID = 'com.andreunicos.lamina';
 const ASSETS = path.join(__dirname, '..', 'assets');
@@ -89,6 +90,8 @@ const SETTINGS_DEFAULTS = {
   clipboardHistory: true,
   memorySaver: true,
   bgNotifications: true,
+  idleUnloadMin: 15, // descarrega aba parada há N min (5/10/15/30; 0 = nunca)
+  efficiencyMode: true, // EcoQoS nos renderers quando a barra está recolhida (Windows)
   lastVault: null,
   reducedMotion: false,
   lastVersion: null,
@@ -176,6 +179,15 @@ function freeIdleMemory() {
     } catch {
       /* sessão ocupada */
     }
+    // Windows: encolhe o working set de todos os processos (devolve RAM ao sistema)
+    // e, se o usuário deixou ligado, coloca os renderers que sobraram em EcoQoS
+    // (modo de baixa energia) enquanto a barra está recolhida.
+    try {
+      memory.trimWorkingSets();
+      if (settings.get('efficiencyMode')) memory.setEcoQoS(true);
+    } catch {
+      /* best-effort */
+    }
   }, 2200);
 }
 
@@ -211,6 +223,12 @@ function expand(view) {
   if (state === 'expanded') {
     win.focus();
     return;
+  }
+  // Tira o EcoQoS dos renderers para a barra reagir em velocidade cheia ao abrir.
+  try {
+    if (settings.get('efficiencyMode')) memory.setEcoQoS(false);
+  } catch {
+    /* best-effort */
   }
   const b = expandedBounds();
   state = 'expanded';
@@ -343,6 +361,21 @@ function createWindow() {
     if (params.preload && params.preload !== ourPreload) delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
+    // Abas em segundo plano (escondidas com display:none) devem ser estranguladas
+    // pelo Chromium: timers caem para ~1/min e o V8/PartitionAlloc devolve RAM uns
+    // segundos depois de irem para segundo plano. A janela da barra mantém
+    // backgroundThrottling:false (para o relógio/Pomodoro não atrasarem); as abas, não.
+    webPreferences.backgroundThrottling = true;
+  });
+  // Quando uma webview anexa, confirma o estrangulamento em segundo plano no
+  // webContents do convidado (a visibilidade real quem controla é o display:none
+  // do elemento no renderer; aqui só garantimos a política de throttling).
+  win.webContents.on('did-attach-webview', (_e, guest) => {
+    try {
+      guest.setBackgroundThrottling(true);
+    } catch {
+      /* versão sem a API */
+    }
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
@@ -673,6 +706,14 @@ function setupIpc() {
     if ('glass' in clean && clean.glass !== prev.glass) result.restartNeeded = true;
     if ('immersive' in clean && clean.immersive !== prev.immersive) applyImmersive(clean.immersive);
     if ('clipboardHistory' in clean) clip.setEnabled(clean.clipboardHistory);
+    if ('efficiencyMode' in clean && !clean.efficiencyMode) {
+      // Desligou o modo de eficiência: tira o EcoQoS que porventura esteja ativo.
+      try {
+        memory.setEcoQoS(false);
+      } catch {
+        /* best-effort */
+      }
+    }
     return result;
   });
 
@@ -684,6 +725,16 @@ function setupIpc() {
 
   // Monitor do PC
   ipcMain.handle('monitor:read', () => sysmon.read());
+
+  // Liberar memória agora: limpa os caches das 6 partições + a sessão padrão,
+  // compacta o heap do main e encolhe o working set de todos os processos (Windows).
+  ipcMain.handle('mem:free', async () => {
+    try {
+      return await memory.freeNow(PARTITIONS);
+    } catch {
+      return { cleared: 0 };
+    }
+  });
 
   // Obsidian
   ipcMain.handle('obsidian:vaults', () => obsidian.vaults());

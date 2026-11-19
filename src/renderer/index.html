@@ -375,7 +375,21 @@
             <legend>Memória</legend>
             <label class="row switch"><span>Dormir ao recolher <small>(libera a memória quando a barra está fechada)</small></span><input type="checkbox" role="switch" data-setting="memorySaver" /></label>
             <label class="row switch"><span>WhatsApp e Discord ligados em segundo plano <small>(precisa disso para as mensagens no Início; gasta mais memória com a barra aberta)</small></span><input type="checkbox" role="switch" data-setting="bgNotifications" /></label>
-            <p class="hint">Com "dormir" ligado, abrir a barra recarrega a aba de novo (uns segundos). As contas continuam logadas.</p>
+            <label class="row">
+              <span>Descartar aba parada há <small>(com a barra aberta; recarrega sozinha ao voltar)</small></span>
+              <select id="setIdleUnload">
+                <option value="5">5 min</option>
+                <option value="10">10 min</option>
+                <option value="15">15 min</option>
+                <option value="30">30 min</option>
+                <option value="0">Nunca</option>
+              </select>
+            </label>
+            <label class="row switch"><span>Modo de eficiência (EcoQoS) <small>(economiza CPU/energia das abas quando a barra recolhe; só no Windows)</small></span><input type="checkbox" role="switch" data-setting="efficiencyMode" /></label>
+            <div class="btn-row">
+              <button class="btn" id="freeMemBtn">Liberar memória agora</button>
+            </div>
+            <p class="hint">Com "dormir" ligado, abrir a barra recarrega a aba de novo (uns segundos). As contas continuam logadas. O WhatsApp e o Discord não são descartados por inatividade enquanto estiverem alimentando o Início.</p>
           </fieldset>
 
           <fieldset class="group">

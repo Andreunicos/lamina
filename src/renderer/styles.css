@@ -322,6 +322,16 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .web-frame webview { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Memória/CPU: a aba à vista fica "visível" para o Chromium; as de baixo risco
+   numa view inativa viram display:none — aí o convidado reporta document.hidden,
+   entra em backgroundThrottling e o PartitionAlloc/V8 devolvem RAM uns segundos
+   depois (visibility:hidden sozinho NÃO faz isso). Com a barra recolhida, TUDO
+   vira display:none. O WhatsApp e o Discord são poupados do display:none enquanto
+   a barra está aberta: eles alimentam o feed do Início em segundo plano e estrangulá-los
+   poderia derrubar o websocket/keepalive. Recolhida, eles também dormem (ou são
+   descarregados pelo "dormir ao recolher"). */
+.view:not(.active):not(#view-whatsapp):not(#view-discord) webview,
+body.is-collapsed webview { display: none !important; }
 .progress {
   position: absolute; top: 0; left: 0; height: 2px; width: 0; z-index: 2;
   background: var(--amber); box-shadow: 0 0 8px rgba(255, 181, 71, 0.7);

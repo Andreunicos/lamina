@@ -25,6 +25,8 @@
   const VIEW_ORDER = ['home', 'apps', 'whatsapp', 'music', 'steam', 'chatgpt', 'gemini', 'notes', 'clipboard', 'timer'];
   const webviews = {};
   const ready = {};
+  // Última vez (ms) que cada serviço foi a aba ativa. Base do descarte por inatividade.
+  const lastSeen = {};
 
   const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -117,6 +119,8 @@
       b.setAttribute('aria-selected', String(sel));
       b.tabIndex = sel ? 0 : -1;
     });
+    const seen = SERVICES[view] ? view : view === 'steam' && webviews.steamchat ? 'steamchat' : null;
+    if (seen) lastSeen[seen] = Date.now();
     reconcileWebviews();
     if (view === 'apps') loadApps().then(() => $('#appsFilter').focus());
     if (view === 'notes') {
@@ -212,6 +216,7 @@
     frame.appendChild(wv);
     webviews[key] = wv;
     ready[key] = false;
+    lastSeen[key] = Date.now();
 
     let failed = false;
     wv.addEventListener('did-start-loading', () => {
@@ -260,17 +265,23 @@
     delete webviews[key];
     ready[key] = false;
   }
-  function activeService() {
-    return SERVICES[currentView] ? currentView : currentView === 'steam' ? null : null;
-  }
   function keepAliveSet() {
     const expanded = document.body.classList.contains('is-expanded');
     const keep = new Set();
     if (!expanded && settings && settings.memorySaver) return keep; // recolhido: dorme tudo
-    const a = SERVICES[currentView] ? currentView : null;
+    const a = visibleService();
     if (a) keep.add(a);
-    if (currentView === 'steam' && $('#steamFriendsPane') && !$('#steamFriendsPane').hidden) keep.add('steamchat');
     if (!settings || settings.bgNotifications !== false) for (const k of BG_SERVICES) keep.add(k);
+    // Mantém "quentes" as abas vistas há pouco: revisitá-las dentro da janela de
+    // inatividade é instantâneo (sem recarregar). Passado o tempo, o sweep as descarta.
+    // "Nunca" (0) mantém vivas todas as abas já abertas enquanto o painel estiver aberto.
+    if (expanded) {
+      const min = idleUnloadMin();
+      const now = Date.now();
+      for (const k of Object.keys(webviews)) {
+        if (min <= 0 || now - (lastSeen[k] || 0) < min * 60000) keep.add(k);
+      }
+    }
     return keep;
   }
   let reconcileTimer = null;
@@ -282,6 +293,44 @@
       for (const k of keep) ensureWebview(k);
     }, delay);
   }
+
+  // Qual serviço está visível agora (a aba web que o usuário está vendo).
+  function visibleService() {
+    if (SERVICES[currentView]) return currentView;
+    if (currentView === 'steam' && $('#steamFriendsPane') && !$('#steamFriendsPane').hidden) return 'steamchat';
+    return null;
+  }
+
+  // Descarte por inatividade (item 1): mesmo com a barra ABERTA, uma aba parada há
+  // mais de N minutos é descarregada (fecha o processo Chromium) e recriada sozinha
+  // quando o usuário voltar a ela. Protege WhatsApp/Discord enquanto estiverem
+  // alimentando o Início (bgNotifications); descarta de preferência as de baixo
+  // risco (music, chatgpt, gemini, steamchat), que são as não protegidas.
+  // Só roda com a barra aberta (via everyWhileOpen); recolhida, tudo já dorme.
+  function idleUnloadMin() {
+    const v = settings ? Number(settings.idleUnloadMin) : 15;
+    return Number.isFinite(v) ? v : 15;
+  }
+  function protectedServices() {
+    const keep = new Set();
+    if (!settings || settings.bgNotifications !== false) for (const k of BG_SERVICES) keep.add(k);
+    return keep;
+  }
+  function sweepIdleWebviews() {
+    const min = idleUnloadMin();
+    const active = visibleService();
+    if (active) lastSeen[active] = Date.now(); // a aba à vista nunca envelhece
+    if (!min || min <= 0) return; // "nunca"
+    const ms = min * 60000;
+    const now = Date.now();
+    const safe = protectedServices();
+    for (const k of Object.keys(webviews)) {
+      if (k === active || safe.has(k)) continue;
+      if (lastSeen[k] == null) lastSeen[k] = now;
+      if (now - lastSeen[k] >= ms) unloadWebview(k);
+    }
+  }
+  everyWhileOpen(sweepIdleWebviews, 30000);
 
   async function whenReady(key, timeout = 20000) {
     const start = Date.now();
@@ -1478,6 +1527,7 @@
     $('#setShortcut').value = settings.shortcut;
     $('#setGlass').value = settings.glass;
     $('#setInterval').value = String(settings.updateIntervalMin);
+    $('#setIdleUnload').value = String(settings.idleUnloadMin);
     $$('[data-setting]').forEach((el) => (el.checked = !!settings[el.dataset.setting]));
     document.body.classList.toggle('reduce-motion', !!settings.reducedMotion);
     const hint = $('#glassHint');
@@ -1492,7 +1542,7 @@
     applySettingsToForm();
     if (!res.ok && res.error) toast(res.error, 4000);
     if (res.restartNeeded) $('#restartBtn').hidden = false;
-    if ('bgNotifications' in patch || 'memorySaver' in patch) reconcileWebviews();
+    if ('bgNotifications' in patch || 'memorySaver' in patch || 'idleUnloadMin' in patch) reconcileWebviews();
     if ('clipboardHistory' in patch && currentView === 'clipboard') renderClip();
     return res;
   }
@@ -1503,6 +1553,27 @@
   });
   $('#setGlass').addEventListener('change', (e) => save({ glass: e.target.value }));
   $('#setInterval').addEventListener('change', (e) => save({ updateIntervalMin: Number(e.target.value) }));
+  $('#setIdleUnload').addEventListener('change', (e) => {
+    save({ idleUnloadMin: Number(e.target.value) });
+    const txt = e.target.selectedOptions[0].textContent;
+    toast(Number(e.target.value) ? `Descarta abas paradas há ${txt}` : 'Abas não são mais descartadas por inatividade');
+  });
+  $('#freeMemBtn').addEventListener('click', async () => {
+    const btn = $('#freeMemBtn');
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = 'Liberando…';
+    if (window.gc) window.gc();
+    try {
+      await api.memory.free();
+      toast('Memória liberada: caches limpos e processos compactados.');
+    } catch {
+      toast('Não consegui liberar a memória agora.');
+    } finally {
+      btn.textContent = prev;
+      btn.disabled = false;
+    }
+  });
   $$('[data-setting]').forEach((el) => el.addEventListener('change', () => save({ [el.dataset.setting]: el.checked })));
   $('#restartBtn').addEventListener('click', () => api.restart());
   $('#quitBtn').addEventListener('click', () => api.quit());
