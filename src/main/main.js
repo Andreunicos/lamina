@@ -15,6 +15,7 @@ const {
   net,
   clipboard,
   dialog,
+  webContents,
 } = require('electron');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -38,6 +39,83 @@ const ASSETS = path.join(__dirname, '..', 'assets');
 // (O flag só alcança os renderers, que nascem depois daqui; não cria dependência
 // nova nem muda o visual.)
 app.commandLine.appendSwitch('js-flags', '--expose-gc');
+
+// Cache em disco: teto modesto de ~100 MiB para o cache HTTP compartilhado das
+// sessões não crescer sem limite (o Chromium usa um teto bem maior por padrão).
+// Ao recolher, freeIdleMemory já limpa esses caches; aqui limitamos o tamanho máximo.
+app.commandLine.appendSwitch('disk-cache-size', '104857600'); // teto modesto de ~100 MiB
+
+// ---------------------------------------------------------------------------
+// Bloqueio de rastreadores/telemetria de TERCEIROS (item 3)
+// Lista pequena, curada e EMBUTIDA — nada é baixado em runtime, sem dependência.
+// LIMITE ÉTICO: só tracker/telemetria/beacon/analytics de terceiros. NUNCA anúncios
+// de serviços pagos por anúncio (YouTube Music fica de fora: não há googlevideo,
+// doubleclick nem ads aqui). NUNCA domínios de auth/CDN dos próprios serviços
+// (Google, Meta/Facebook/WhatsApp, Microsoft-login, Discord, OpenAI, Valve/Steam).
+const TRACKER_HOSTS = [
+  'segment.io', 'segment.com', 'api.segment.io', 'cdn.segment.com',
+  'amplitude.com', 'api.amplitude.com', 'api2.amplitude.com', 'cdn.amplitude.com',
+  'mixpanel.com', 'api.mixpanel.com', 'cdn.mxpnl.com',
+  'hotjar.com', 'hotjar.io', 'static.hotjar.com',
+  'fullstory.com', 'rs.fullstory.com',
+  'heapanalytics.com', 'cdn.heapanalytics.com',
+  'mouseflow.com', 'smartlook.com', 'rudderstack.com',
+  'browser-intake-datadoghq.com', 'browser-intake-datadoghq.eu',
+  'nr-data.net', 'bam.nr-data.net', 'bam-cell.nr-data.net', 'js-agent.newrelic.com',
+  'scorecardresearch.com', 'sb.scorecardresearch.com',
+  'quantserve.com', 'quantcount.com', 'pixel.quantserve.com',
+  'clarity.ms', 'c.clarity.ms',
+  'sentry.io', 'ingest.sentry.io',
+  'optimizely.com', 'logx.optimizely.com',
+  'mparticle.com', 'branch.io', 'app-measurement.com',
+];
+const trackerSet = new Set(TRACKER_HOSTS);
+function isTrackerHost(host) {
+  host = String(host || '').toLowerCase();
+  if (trackerSet.has(host)) return true;
+  for (const d of TRACKER_HOSTS) {
+    if (host.endsWith('.' + d)) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Purga de memória via CDP só nas abas OCIOSAS ocultas (item 5)
+// NUNCA toca em WhatsApp/Discord (críticas) nem na aba com áudio tocando (música).
+// Nada de Page.setWebLifecycleState('frozen') (risco de aba travada; omitido de
+// propósito). Tudo best-effort: o CDP é experimental.
+const NEVER_PURGE = new Set(['whatsapp', 'discord']);
+async function purgeWebContents(key, wcId) {
+  if (NEVER_PURGE.has(key)) return; // críticas: nunca
+  const wc = (() => {
+    try {
+      return webContents.fromId(wcId);
+    } catch {
+      return null;
+    }
+  })();
+  if (!wc || wc.isDestroyed()) return;
+  try {
+    if (wc.isCurrentlyAudible()) return; // tocando áudio (música): nunca
+  } catch {
+    /* API ausente */
+  }
+  const dbg = wc.debugger;
+  try {
+    if (!dbg.isAttached()) dbg.attach('1.3');
+    await dbg.sendCommand('HeapProfiler.collectGarbage').catch(() => {});
+    await dbg.sendCommand('Memory.simulatePressureNotification', { level: 'critical' }).catch(() => {});
+    await dbg.sendCommand('Memory.forciblyPurgeJavaScriptMemory').catch(() => {});
+  } catch {
+    /* CDP experimental; best-effort */
+  } finally {
+    try {
+      dbg.detach();
+    } catch {
+      /* já solto */
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Instância única
@@ -92,6 +170,9 @@ const SETTINGS_DEFAULTS = {
   bgNotifications: true,
   idleUnloadMin: 15, // descarrega aba parada há N min (5/10/15/30; 0 = nunca)
   efficiencyMode: true, // EcoQoS nos renderers quando a barra está recolhida (Windows)
+  leanWebviews: true, // autoplay off + sem animação de imagem + CSS anti-animação + purga CDP das abas ociosas ocultas
+  blockTrackers: true, // bloqueia rastreadores/telemetria de terceiros (lista curada embutida)
+  musicKeepPlaying: true, // mantém só a aba de música tocando ao recolher; o resto dorme
   lastVault: null,
   reducedMotion: false,
   lastVersion: null,
@@ -361,6 +442,13 @@ function createWindow() {
     if (params.preload && params.preload !== ourPreload) delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
+    // Otimização de sites em segundo plano (item 1): sem autoplay automático e sem
+    // animação de GIF/imagem. O autoplay off exige "gesto do usuário" para iniciar
+    // reprodução — por isso as chamadas que TOCAM música passam userGesture=true.
+    if (!settings || settings.get('leanWebviews') !== false) {
+      webPreferences.autoplayPolicy = 'document-user-activation-required';
+      webPreferences.imageAnimationPolicy = 'noAnimation';
+    }
     // Abas em segundo plano (escondidas com display:none) devem ser estranguladas
     // pelo Chromium: timers caem para ~1/min e o V8/PartitionAlloc devolve RAM uns
     // segundos depois de irem para segundo plano. A janela da barra mantém
@@ -514,6 +602,19 @@ function setupSessions() {
     ses.setUserAgent(CHROME_UA);
     ses.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED_PERMISSIONS.has(permission)));
     ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
+    // Item 3: cancela requisições a rastreadores/telemetria de terceiros. Lê o
+    // setting na hora (o toggle vale imediatamente). Só hosts da lista curada.
+    ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, cb) => {
+      try {
+        if (!settings || settings.get('blockTrackers') !== false) {
+          const h = new URL(details.url).hostname;
+          if (isTrackerHost(h)) return cb({ cancel: true });
+        }
+      } catch {
+        /* URL inválida */
+      }
+      cb({});
+    });
     // Cabeçalhos das páginas de login do Google: Firefox e sem as "client hints" do Chromium
     ses.webRequest.onBeforeSendHeaders({ urls: ['https://accounts.google.com/*'] }, (details, cb) => {
       const headers = details.requestHeaders;
@@ -734,6 +835,14 @@ function setupIpc() {
     } catch {
       return { cleared: 0 };
     }
+  });
+
+  // Purga CDP de uma aba ociosa oculta (item 5). O renderer só pede para abas não
+  // críticas; aqui reforçamos que WhatsApp/Discord e a aba tocando nunca são purgadas.
+  ipcMain.handle('mem:purge', (_e, key, wcId) => {
+    if (settings.get('leanWebviews') === false) return false;
+    purgeWebContents(key, wcId);
+    return true;
   });
 
   // Obsidian

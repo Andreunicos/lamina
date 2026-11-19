@@ -8,6 +8,26 @@
   const params = new URLSearchParams(location.search);
   document.body.classList.add(`glass-${params.get('glass') || 'simulated'}`, `side-${params.get('side') || 'right'}`);
 
+  // Seam de teste (só com ?test=1): expõe um punhado de observadores para o smoke
+  // verificar, de forma determinística e sem rede, a música em segundo plano (item 6)
+  // e que a purga (item 5) nunca é pedida para abas críticas. Inerte em produção.
+  if (params.get('test') === '1') {
+    window.__laminaTest = {
+      forceMusicPlaying(v) {
+        musicPlaying = !!v;
+      },
+      state() {
+        return {
+          musicPlaying,
+          musicBg: !!musicBgTimer,
+          webviews: Object.keys(webviews),
+          musicDisplay: webviews.music ? webviews.music.style.display : null,
+        };
+      },
+      purgeCalls: [],
+    };
+  }
+
   let info = null;
   let settings = {};
   let currentView = 'home';
@@ -27,6 +47,18 @@
   const ready = {};
   // Última vez (ms) que cada serviço foi a aba ativa. Base do descarte por inatividade.
   const lastSeen = {};
+
+  // Música tocando agora? (atualizado pelo pollMusic / checkMusicBg). Base do
+  // "manter música em segundo plano ao recolher" (item 6) e da proteção contra purga.
+  let musicPlaying = false;
+  let musicBgTimer = null;
+  // Abas de baixo risco: só estas podem receber purga CDP (item 5). WhatsApp/Discord
+  // (críticas) nunca. A aba music enquanto estiver tocando também é poupada.
+  const NON_CRITICAL = new Set(['music', 'chatgpt', 'gemini', 'steamchat']);
+  const purgeTimers = {};
+  // CSS anti-animação (item 2): idioma do prefers-reduced-motion — encurta animações
+  // e transições (não as zera, preservando transitionend), sem quebrar os sites.
+  const ANTIANIM_CSS = `*,*::before,*::after{animation-duration:.001ms !important;animation-delay:0ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important;transition-delay:0ms !important;scroll-behavior:auto !important;}`;
 
   const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -232,6 +264,10 @@
       if (failed) return; // a página de erro do Chromium também dispara dom-ready
       ready[key] = true;
       try { wv.setZoomFactor(getZoom(key)); } catch { /* ainda anexando */ }
+      // CSS anti-animação (item 2): reaplica a cada navegação (dom-ready redispara).
+      if (!settings || settings.leanWebviews !== false) {
+        try { wv.insertCSS(ANTIANIM_CSS); } catch { /* ainda anexando */ }
+      }
       clearWebMessage(key);
     });
     wv.addEventListener('did-fail-load', (e) => {
@@ -268,7 +304,11 @@
   function keepAliveSet() {
     const expanded = document.body.classList.contains('is-expanded');
     const keep = new Set();
-    if (!expanded && settings && settings.memorySaver) return keep; // recolhido: dorme tudo
+    if (!expanded) {
+      // Recolhido tocando: mantém só a aba de música viva (item 6); o resto dorme.
+      if (settings && settings.musicKeepPlaying !== false && musicPlaying && webviews.music) keep.add('music');
+      if (settings && settings.memorySaver) return keep; // recolhido: dorme tudo
+    }
     const a = visibleService();
     if (a) keep.add(a);
     if (!settings || settings.bgNotifications !== false) for (const k of BG_SERVICES) keep.add(k);
@@ -291,7 +331,69 @@
       const keep = keepAliveSet();
       for (const k of Object.keys(webviews)) if (!keep.has(k)) unloadWebview(k);
       for (const k of keep) ensureWebview(k);
+      // Purga CDP das abas ociosas ocultas (item 5): só com a barra aberta, só as
+      // não críticas, e nunca a que está à vista.
+      if (document.body.classList.contains('is-expanded')) {
+        const vis = visibleService();
+        for (const k of Object.keys(webviews)) {
+          if (!NON_CRITICAL.has(k)) continue;
+          if (k === vis) cancelPurge(k);
+          else schedulePurge(k);
+        }
+      }
+      // Música em segundo plano ao recolher (item 6): ao recolher tocando, mantém só
+      // a música, oculta o visual e liga o bgTimer; ao expandir, restaura o display.
+      applyMusicBackground();
     }, delay);
+  }
+
+  // Purga CDP (item 5): agenda a purga de uma aba ociosa oculta após 10 s. Cancela se
+  // a aba voltar a ser a visível. WhatsApp/Discord (críticas) e a música tocando são
+  // poupadas aqui e, por garantia, de novo no processo principal.
+  function schedulePurge(key) {
+    if (!NON_CRITICAL.has(key)) return;
+    if (settings && settings.leanWebviews === false) return;
+    if (purgeTimers[key]) return;
+    purgeTimers[key] = setTimeout(() => {
+      purgeTimers[key] = null;
+      const wv = webviews[key];
+      if (!wv || !ready[key]) return;
+      if (key === visibleService()) return;
+      if (key === 'music' && musicPlaying) return;
+      let id = null;
+      try { id = wv.getWebContentsId(); } catch { return; }
+      if (window.__laminaTest) window.__laminaTest.purgeCalls.push(key);
+      if (id != null && api.memory && api.memory.purge) api.memory.purge(key, id);
+    }, 10000);
+  }
+  function cancelPurge(key) {
+    if (purgeTimers[key]) { clearTimeout(purgeTimers[key]); purgeTimers[key] = null; }
+  }
+
+  // Música em segundo plano (item 6): com a barra recolhida e a música tocando,
+  // oculta o elemento (o áudio continua) e checa a cada 4 s se ainda está tocando.
+  function applyMusicBackground() {
+    const expanded = document.body.classList.contains('is-expanded');
+    const bg = !expanded && !!webviews.music && settings && settings.musicKeepPlaying !== false && musicPlaying;
+    if (bg) {
+      try { webviews.music.style.display = 'none'; } catch { /* já removida */ } // oculta o visual; áudio continua
+      if (!musicBgTimer) musicBgTimer = setInterval(checkMusicBg, 4000);
+    } else {
+      if (webviews.music) { try { webviews.music.style.display = ''; } catch { /* já removida */ } }
+      if (musicBgTimer) { clearInterval(musicBgTimer); musicBgTimer = null; }
+    }
+  }
+  async function checkMusicBg() {
+    const wv = webviews.music;
+    if (!wv || document.body.classList.contains('is-expanded')) { applyMusicBackground(); return; }
+    let st = null;
+    try { st = await wv.executeJavaScript(MUSIC_STATE_JS); } catch { st = null; }
+    if (!st || !st.playing) { // pausou/parou → cai pro piso
+      musicPlaying = false;
+      unloadWebview('music');
+      if (musicBgTimer) { clearInterval(musicBgTimer); musicBgTimer = null; }
+      try { if (api.memory && api.memory.free) api.memory.free(); } catch { /* best-effort */ }
+    }
   }
 
   // Qual serviço está visível agora (a aba web que o usuário está vendo).
@@ -606,7 +708,9 @@
     if (!(await whenReady('music'))) return;
     await sleep(600);
     try {
-      const ok = await wv.executeJavaScript(AUTOPLAY_JS);
+      // userGesture=true: com autoplayPolicy exigindo ativação do usuário (item 1),
+      // iniciar a reprodução precisa de gesto. O clique no botão de tocar vale disso.
+      const ok = await wv.executeJavaScript(AUTOPLAY_JS, true);
       if (!ok) toast('Não achei um botão de tocar. Escolha na lista.', 3200);
     } catch {
       /* página mudou no meio */
@@ -619,16 +723,18 @@
     $('#musicQuery').select();
   });
 
-  async function musicCmd(js) {
+  async function musicCmd(js, gesture) {
     const wv = webviews.music;
     if (!wv || !ready.music) return;
     try {
-      await wv.executeJavaScript(js);
+      // gesture=true marca a chamada como ativação do usuário (necessário para o play
+      // com autoplayPolicy exigindo gesto — item 1). O toggle passa true; next/prev não.
+      await wv.executeJavaScript(js, !!gesture);
       setTimeout(pollMusic, 300);
     } catch { /* ignora */ }
   }
   $('#npToggle').addEventListener('click', () =>
-    musicCmd(`(() => { const v = document.querySelector('video'); if (v) v.paused ? v.play() : v.pause(); })()`)
+    musicCmd(`(() => { const v = document.querySelector('video'); if (v) v.paused ? v.play() : v.pause(); })()`, true)
   );
   $('#npNext').addEventListener('click', () => musicCmd(`document.querySelector('.next-button')?.click()`));
   $('#npPrev').addEventListener('click', () => musicCmd(`document.querySelector('.previous-button')?.click()`));
@@ -637,11 +743,13 @@
     const wv = webviews.music;
     const box = $('#nowPlaying');
     if (!wv || !ready.music) {
+      musicPlaying = false;
       box.hidden = true;
       return;
     }
     try {
       const st = await wv.executeJavaScript(MUSIC_STATE_JS);
+      musicPlaying = !!(st && st.playing);
       if (!st) {
         box.hidden = true;
         return;

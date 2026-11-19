@@ -26,6 +26,7 @@ const SETTINGS = {
   openAtLogin: false, glass: 'simulated', updateIntervalMin: 30, autoInstall: true,
   preloadWhatsApp: true, panelWidth: 440, immersive: false, clipboardHistory: true,
   memorySaver: true, bgNotifications: false, idleUnloadMin: 0.05, efficiencyMode: true,
+  leanWebviews: true, blockTrackers: true, musicKeepPlaying: true,
   lastVault: null, reducedMotion: true, lastVersion: null, firstRunDone: true,
 };
 
@@ -74,6 +75,7 @@ function setupIpc() {
   mock('clip:clear', () => true);
   mock('monitor:read', () => ({ cpu: { percent: 10, cores: 8 }, mem: { usedGB: 8, totalGB: 16, percent: 50 }, gpu: null }));
   mock('mem:free', () => ({ cleared: 7 }));
+  mock('mem:purge', () => true);
   mock('obsidian:vaults', () => []);
   mock('obsidian:save', () => ({ ok: false }));
   mock('app:notify');
@@ -110,7 +112,7 @@ app.whenReady().then(async () => {
   win.webContents.on('render-process-gone', (_e, d) => jsErrors.push(`render-process-gone: ${d.reason}`));
   win.webContents.on('preload-error', (_e, p, err) => jsErrors.push(`preload-error: ${err && err.message}`));
 
-  await win.loadFile(RENDERER, { query: { glass: 'simulated', side: 'right' } });
+  await win.loadFile(RENDERER, { query: { glass: 'simulated', side: 'right', test: '1' } });
   await sleep(1500); // init() assíncrono
 
   const run = (js) => win.webContents.executeJavaScript(js, true);
@@ -161,6 +163,47 @@ app.whenReady().then(async () => {
   await run("document.getElementById('freeMemBtn').click()");
   await sleep(500);
   assert((calls['mem:free'] || 0) >= 1, 'mem:free não foi chamado pelo botão');
+
+  // 6b) MÚSICA EM SEGUNDO PLANO AO RECOLHER (item 6) + purga nunca pede crítica (item 5)
+  // Cria duas abas ociosas (music + chatgpt), marca a música como tocando e recolhe:
+  // só a música deve sobreviver, oculta (display:none) e com o bgTimer ligado.
+  win.webContents.send('state', 'expanded');
+  await sleep(400);
+  await run("document.querySelector('.rail-btn[data-view=\"music\"]').click()");
+  await sleep(300);
+  await run("document.querySelector('.rail-btn[data-view=\"chatgpt\"]').click()");
+  await sleep(300);
+  await run("document.querySelector('.rail-btn[data-view=\"music\"]').click()");
+  await sleep(300);
+  await run('window.__laminaTest.forceMusicPlaying(true)');
+  assert(await run("document.querySelectorAll('webview').length >= 2"), 'não criou as 2 abas (music + chatgpt)');
+
+  win.webContents.send('state', 'collapsed');
+  await sleep(2200); // reconcile de 1600 + folga, antes do 1º tick do bgTimer de 4 s
+  let st6 = JSON.parse(await run('JSON.stringify(window.__laminaTest.state())'));
+  assert(st6.webviews.includes('music'), 'música não ficou viva ao recolher tocando');
+  assert(!st6.webviews.includes('chatgpt'), 'chatgpt não dormiu ao recolher');
+  assert(st6.musicDisplay === 'none', `música não foi ocultada (display=${st6.musicDisplay})`);
+  assert(st6.musicBg === true, 'bgTimer da música não ligou');
+
+  // Música para de tocar → cai pro piso (descarrega a aba de música)
+  await run('window.__laminaTest.forceMusicPlaying(false)');
+  await sleep(5000); // um tick do bgTimer de 4 s + folga
+  st6 = JSON.parse(await run('JSON.stringify(window.__laminaTest.state())'));
+  assert(!st6.webviews.includes('music'), 'música não caiu pro piso ao parar');
+
+  // Item 5: nenhuma aba crítica (whatsapp/discord) pode ter sido pedida para purga
+  const purgeCalls = JSON.parse(await run('JSON.stringify(window.__laminaTest.purgeCalls)'));
+  assert(!purgeCalls.includes('whatsapp') && !purgeCalls.includes('discord'), `purga pedida para crítica: ${JSON.stringify(purgeCalls)}`);
+
+  // Reexpande e recria uma aba de serviço para o teste de inatividade a seguir
+  win.webContents.send('state', 'expanded');
+  await sleep(400);
+  await run("document.querySelector('.rail-btn[data-view=\"music\"]').click()");
+  await sleep(600);
+  assert(await run("document.querySelectorAll('webview').length >= 1"), 'webview de música não recriada para o teste de inatividade');
+  await run("document.querySelector('.rail-btn[data-view=\"home\"]').click()");
+  await sleep(500);
 
   // 7) Descarte por inatividade: espera um ciclo do sweep (30 s) + a janela de 3 s
   await sleep(33000);

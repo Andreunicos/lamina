@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('lamina', {
   },
   memory: {
     free: () => ipcRenderer.invoke('mem:free'),
+    purge: (key, id) => ipcRenderer.invoke('mem:purge', key, id),
   },
   obsidian: {
     vaults: () => ipcRenderer.invoke('obsidian:vaults'),
